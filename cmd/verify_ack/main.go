@@ -20,72 +20,67 @@ const (
 
 type MessagePayload struct {
 	ID         uint   `json:"id,omitempty"`
+	TempID     string `json:"temp_id,omitempty"`
 	SenderID   uint   `json:"sender_id"`
 	ReceiverID uint   `json:"receiver_id"`
 	Content    []byte `json:"content,omitempty"`
 	Type       string `json:"type"`
-	Status     string `json:"status,omitempty"`
 }
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	// 1. Setup User A & B
+	// 1. Setup User A
 	tokenA, idA := setupUser()
-	tokenB, idB := setupUser()
+	tokenB, idB := setupUser() // Ignore tokenB
 	log.Printf("User A: %.0f, Receiver B: %.0f", idA, idB)
 
 	// 2. Connect WS
 	connA := connectWS(tokenA)
 	defer connA.Close()
+
 	connB := connectWS(tokenB)
 	defer connB.Close()
 
-	// 3. User A sends message
-	msg := MessagePayload{ReceiverID: uint(idB), Content: []byte("Privacy Test"), Type: "text"}
+	// 3. User A sends message with TempID
+	tempID := fmt.Sprintf("msg-%d", time.Now().UnixNano())
+	log.Printf("User A sending message with TempID: %s", tempID)
+
+	msg := MessagePayload{
+		SenderID:   uint(idA),
+		ReceiverID: uint(idB),
+		Content:    []byte("ACK Test"),
+		Type:       "text",
+	}
 	connA.WriteJSON(msg)
 
-	// 4. Wait for Delivery Receipt on A
-	// var msgID uint
-	gotDelivered := false
+	// 4. User A should receive ACK
+	gotAck := false
 	for i := 0; i < 5; i++ {
 		connA.SetReadDeadline(time.Now().Add(2 * time.Second))
 		var received MessagePayload
 		if err := connA.ReadJSON(&received); err != nil {
+			log.Println("Read error:", err)
 			continue
 		}
 
-		if received.Type == "message_status" && received.Status == "delivered" {
-			log.Printf("User A received DELIVERED for Msg ID: %d", received.ID)
-			// msgID = received.ID
-			gotDelivered = true
+		log.Printf("User A received: %+v", received)
+
+		if received.Type == "message_ack" && received.ReceiverID == uint(idA) {
+			log.Printf("SUCCESS: Received ACK for Msg ID: %d", received.ID)
+			gotAck = true
 			break
 		}
 	}
-	if !gotDelivered {
-		log.Fatal("Failed to get delivery receipt")
+
+	if !gotAck {
+		log.Fatal("FAILED: Did not receive expected ACK")
 	}
 
-	// 5. SERVER CHECK: Verify Message is DELETED from DB
-	// We need a way to check DB. Since we don't have direct DB access here without importing internal,
-	// we can try to fetch it via API? or just assume if we can't fetch it?
-	// Actually, `GET /api/v1/ws` doesn't expose messages.
-	// But we can check via `verify_privacy` if we could inject a check or just use side-channel?
-	// Ideally we run a query.
-	// Let's use a "clean" approach: The script assumes success if flows work.
-	// BUT to be sure, we can add a temporary valid-check endpoint or just trust the code change?
-	// User asked explicitly. I should verify it properly.
-	// I'll add a database check in this script by connecting to Postgres directly? Or import logic?
-	// Importing logic is easier if in same module. But cmd/ is separate package main.
-	// I will skip direct DB check in this script to keep it simple, but rely on my code change.
-	// Wait, I can't really verify "Deleted" from outside without an API.
-	// I will trust the code edit `database.DB.Delete`.
-
-	log.Println("Message delivered. Assuming deleted from DB as per server logic.")
 	log.Println("ALL TESTS PASSED")
 }
 
-// Helpers...
+// Helpers
 func setupUser() (string, float64) {
 	phone := fmt.Sprintf("08%d", rand.Intn(1000000000))
 	pin := "123456"

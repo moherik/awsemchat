@@ -14,6 +14,7 @@ type User struct {
 	AvatarURL string    `json:"avatar_url"`
 	FCMToken  string    `json:"fcm_token"`  // Firebase Cloud Messaging Token
 	PublicKey string    `json:"public_key"` // Identity Key for E2E
+	LastSeen  time.Time `json:"last_seen"`  // Timestamp of last disconnect
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -60,13 +61,15 @@ type Order struct {
 }
 
 type Message struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	SenderID    uint      `gorm:"index" json:"sender_id"`
-	RecipientID *uint     `gorm:"index" json:"recipient_id,omitempty"` // Null if group
-	GroupID     *uint     `gorm:"index" json:"group_id,omitempty"`
-	Content     []byte    `json:"content"` // Encrypted blob
-	Type        string    `json:"type"`    // text, image, money
-	CreatedAt   time.Time `json:"created_at"`
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	SenderID         uint      `gorm:"index" json:"sender_id"`
+	RecipientID      *uint     `gorm:"index" json:"recipient_id,omitempty"` // Null if group
+	GroupID          *uint     `gorm:"index" json:"group_id,omitempty"`
+	Content          []byte    `json:"content"` // Encrypted blob
+	Type             string    `json:"type"`    // text, image, money
+	ReplyToStatusID  *uint     `json:"reply_to_status_id,omitempty"`
+	ReplyToProductID *uint     `json:"reply_to_product_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type Group struct {
@@ -85,12 +88,13 @@ type GroupMember struct {
 }
 
 type Status struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	UserID     uint      `gorm:"index" json:"user_id"`
-	ContentURL string    `json:"content_url"`
-	Caption    string    `json:"caption"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index" json:"user_id"`
+	Content   []byte    `json:"content"`
+	Caption   string    `json:"caption"`
+	Products  []Product `gorm:"many2many:status_products;" json:"products,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type E2EKeys struct {
@@ -120,4 +124,20 @@ type PaymentRequest struct {
 	Status      string    `gorm:"default:'pending'" json:"status"` // pending, paid, cancelled
 	PayerID     *uint     `json:"payer_id,omitempty"`              // Who paid it
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type VerificationCode struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Phone     string    `gorm:"index;not null" json:"phone"`
+	Code      string    `json:"code"`
+	IsActive  bool      `gorm:"default:true" json:"is_active"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Block struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	BlockerID uint      `gorm:"uniqueIndex:idx_blocker_blocked" json:"blocker_id"`
+	BlockedID uint      `gorm:"uniqueIndex:idx_blocker_blocked" json:"blocked_id"`
+	CreatedAt time.Time `json:"created_at"`
 }

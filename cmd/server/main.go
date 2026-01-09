@@ -2,11 +2,13 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"awsemchat/internal/config"
 	"awsemchat/internal/database"
 	"awsemchat/internal/handlers"
 	authMiddleware "awsemchat/internal/middleware"
+	"awsemchat/internal/repository"
 	"awsemchat/internal/websocket"
 
 	"github.com/labstack/echo/v4"
@@ -57,6 +59,19 @@ func main() {
 	handlers.RegisterStatusRoutes(protected)
 	handlers.RegisterPromoRoutes(protected)
 	protected.GET("/ws", handlers.ServeWS)
+
+	// Start Cleanup Worker (Status)
+	go func() {
+		statusRepo := repository.NewStatusRepository()
+		for {
+			if err := statusRepo.CleanupExpired(); err != nil {
+				log.Printf("Error cleaning up statuses: %v", err)
+			} else {
+				// log.Println("Cleaned up expired statuses")
+			}
+			time.Sleep(1 * time.Hour)
+		}
+	}()
 
 	// Start Server
 	log.Println("Server starting on port " + cfg.Port)

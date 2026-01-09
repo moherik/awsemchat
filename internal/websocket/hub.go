@@ -8,6 +8,7 @@ import (
 
 	"awsemchat/internal/database"
 	"awsemchat/internal/models"
+	"awsemchat/internal/repository"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -17,7 +18,7 @@ type Hub struct {
 	// Registered clients map: UserID -> Client
 	clients map[uint]*Client
 
-	// Locks for the clients map
+	// Locks for the clients map (and presence)
 	mu sync.RWMutex
 
 	// Inbound messages from the clients.
@@ -35,14 +36,20 @@ type Hub struct {
 
 	// Firebase Client
 	FCMClient *messaging.Client
+
+	UserRepo *repository.UserRepository
 }
 
 type MessagePayload struct {
-	SenderID   uint   `json:"sender_id"`
-	ReceiverID uint   `json:"receiver_id"`
-	Content    []byte `json:"content"` // Encrypted blob
-	Type       string `json:"type"`    // text, image, etc
-	GroupID    *uint  `json:"group_id,omitempty"`
+	ID               uint   `json:"id,omitempty"`
+	TempID           string `json:"temp_id,omitempty"` // Client-side ID for Ack matching
+	SenderID         uint   `json:"sender_id"`
+	ReceiverID       uint   `json:"receiver_id"`
+	Content          []byte `json:"content,omitempty"` // Encrypted blob
+	Type             string `json:"type"`              // text, image, etc, read_receipt, message_status
+	GroupID          *uint  `json:"group_id,omitempty"`
+	ReplyToStatusID  *uint  `json:"reply_to_status_id,omitempty"`
+	ReplyToProductID *uint  `json:"reply_to_product_id,omitempty"`
 }
 
 func NewHub() *Hub {
@@ -52,6 +59,7 @@ func NewHub() *Hub {
 		Unregister: make(chan *Client),
 		clients:    make(map[uint]*Client),
 		Unicast:    make(chan *MessagePayload),
+		UserRepo:   repository.NewUserRepository(),
 	}
 
 	// Initialize Firebase
@@ -83,6 +91,7 @@ func (h *Hub) Run() {
 				close(old.Send)
 				delete(h.clients, client.UserID)
 			}
+
 			h.clients[client.UserID] = client
 			h.mu.Unlock()
 			log.Printf("User %d registered to Hub", client.UserID)
@@ -96,15 +105,32 @@ func (h *Hub) Run() {
 				delete(h.clients, client.UserID)
 				close(client.Send)
 			}
+
 			h.mu.Unlock()
 			log.Printf("User %d unregistered from Hub", client.UserID)
 
+			// Update LastSeen
+			go func(uid uint) {
+				if err := database.DB.Model(&models.User{}).Where("id = ?", uid).Update("last_seen", time.Now()).Error; err != nil {
+					log.Printf("Failed to update LastSeen for user %d: %v", uid, err)
+				}
+			}(client.UserID)
+
 		case message := <-h.Unicast:
+
 			h.mu.RLock()
-			recipient, ok := h.clients[message.ReceiverID]
+			recipient, recipientOk := h.clients[message.ReceiverID]
 			h.mu.RUnlock()
 
-			if ok {
+			// Check Blocking (Is Recipient blocking Sender?)
+			if h.UserRepo.IsBlocked(message.ReceiverID, message.SenderID) {
+				log.Printf("Message dropped: User %d blocked User %d", message.ReceiverID, message.SenderID)
+				continue
+			}
+
+			h.SendAck(message)
+
+			if recipientOk {
 				// Send to recipient
 				select {
 				case recipient.Send <- message:
@@ -118,19 +144,49 @@ func (h *Hub) Run() {
 					h.mu.Unlock()
 
 					// Store as pending since delivery failed (buffer full)
-					h.storePendingMessage(message)
+					h.StorePendingMessage(message)
 				}
 			} else {
 				// Recipient is offline. Persist for later delivery.
 				log.Printf("User %d is offline. Storing message.", message.ReceiverID)
-				h.storePendingMessage(message)
+				h.StorePendingMessage(message)
 
 				// TRIGGER PUSH NOTIFICATION
-				// In production: Fire and forget to FCM Worker
 				go h.SendPushNotification(message.ReceiverID)
 			}
 		}
 	}
+}
+
+func (h *Hub) SendAck(message *MessagePayload) {
+	if message.Type == "message_ack" {
+		return
+	}
+
+	h.mu.RLock()
+	sender, _ := h.clients[message.SenderID]
+	h.mu.RUnlock()
+
+	ack := MessagePayload{
+		TempID:          message.TempID,
+		ReceiverID:      message.SenderID,
+		Type:            "message_ack",
+		GroupID:         message.GroupID,
+		ReplyToStatusID: message.ReplyToStatusID,
+	}
+	// Non-blocking send to avoid deadlock if send buffer is full
+	select {
+	case sender.Send <- &ack:
+	default:
+		log.Println("Failed to send Ack: Buffer full")
+	}
+}
+
+func (h *Hub) IsUserOnline(userID uint) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.clients[userID]
+	return ok
 }
 
 func (h *Hub) SendPushNotification(userID uint) {
@@ -171,14 +227,16 @@ func (h *Hub) SendPushNotification(userID uint) {
 	}
 }
 
-func (h *Hub) storePendingMessage(payload *MessagePayload) {
+func (h *Hub) StorePendingMessage(payload *MessagePayload) {
 	dbMsg := models.Message{
-		SenderID:    payload.SenderID,
-		RecipientID: &payload.ReceiverID,
-		Content:     payload.Content,
-		Type:        payload.Type,
-		GroupID:     payload.GroupID,
-		CreatedAt:   time.Now(),
+		SenderID:         payload.SenderID,
+		RecipientID:      &payload.ReceiverID,
+		Content:          payload.Content,
+		Type:             payload.Type,
+		GroupID:          payload.GroupID,
+		ReplyToStatusID:  payload.ReplyToStatusID,
+		ReplyToProductID: payload.ReplyToProductID,
+		CreatedAt:        time.Now(),
 	}
 	if err := database.DB.Create(&dbMsg).Error; err != nil {
 		log.Printf("Failed to store pending message for user %d: %v", payload.ReceiverID, err)
@@ -196,11 +254,13 @@ func (h *Hub) FlushPendingMessages(userID uint) {
 	for _, msg := range messages {
 		// Convert to payload
 		payload := &MessagePayload{
-			SenderID:   msg.SenderID,
-			ReceiverID: userID, // Known
-			Content:    msg.Content,
-			Type:       msg.Type,
-			GroupID:    msg.GroupID,
+			SenderID:         msg.SenderID,
+			ReceiverID:       userID, // Known
+			Content:          msg.Content,
+			Type:             msg.Type,
+			GroupID:          msg.GroupID,
+			ReplyToStatusID:  msg.ReplyToStatusID,
+			ReplyToProductID: msg.ReplyToProductID,
 		}
 
 		// Delete from DB first to avoid duplicates if Unicast re-stores it

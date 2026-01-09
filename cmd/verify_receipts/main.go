@@ -24,7 +24,7 @@ type MessagePayload struct {
 	ReceiverID uint   `json:"receiver_id"`
 	Content    []byte `json:"content,omitempty"`
 	Type       string `json:"type"`
-	Status     string `json:"status,omitempty"`
+	// Status removed
 }
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 	// 1. Setup User A & B
 	tokenA, idA := setupUser()
 	tokenB, idB := setupUser()
-	log.Printf("User A: %.0f, Receiver B: %.0f", idA, idB)
+	log.Printf("User A: %.0f, User B: %.0f", idA, idB)
 
 	// 2. Connect WS
 	connA := connectWS(tokenA)
@@ -41,51 +41,94 @@ func main() {
 	connB := connectWS(tokenB)
 	defer connB.Close()
 
-	// 3. User A sends message
-	msg := MessagePayload{ReceiverID: uint(idB), Content: []byte("Privacy Test"), Type: "text"}
+	// 3. User A sends message to B
+	log.Println("--- MSG SENT ---")
+	msg := MessagePayload{ReceiverID: uint(idB), Content: []byte("Hello"), Type: "text"}
 	connA.WriteJSON(msg)
 
-	// 4. Wait for Delivery Receipt on A
-	// var msgID uint
+	// 4. User B receives message and sends Delivery Receipt (Client Logic now)
+	// We need to simulate B reading the message first from the socket?
+	// In this script setup, A waits for delivery. B is just connected.
+	// We need B to read the message, then send delivery receipt.
+
+	// Start B reading in background
+	go func() {
+		for {
+			var msg MessagePayload
+			if err := connB.ReadJSON(&msg); err != nil {
+				log.Println("B Read Error:", err)
+				return
+			}
+			log.Printf("B Received: %+v", msg)
+			if msg.Type == "text" {
+				// Send Delivery Receipt
+				delReceipt := MessagePayload{
+					Type:       "delivery_receipt",
+					ID:         msg.ID,
+					ReceiverID: uint(idA),
+				}
+				connB.WriteJSON(delReceipt)
+
+				// Then later send Read Receipt
+				time.Sleep(100 * time.Millisecond)
+				readReceipt := MessagePayload{
+					Type:       "read_receipt",
+					ID:         msg.ID,
+					ReceiverID: uint(idA),
+				}
+				connB.WriteJSON(readReceipt)
+			}
+		}
+	}()
+
+	// 5. User A waits for "delivered" status update (now from B)
+	var deliveredMsgID uint
+
+	// Read Loop for A
 	gotDelivered := false
 	for i := 0; i < 5; i++ {
 		connA.SetReadDeadline(time.Now().Add(2 * time.Second))
 		var received MessagePayload
 		if err := connA.ReadJSON(&received); err != nil {
+			log.Println("A read error:", err)
 			continue
 		}
 
-		if received.Type == "message_status" && received.Status == "delivered" {
-			log.Printf("User A received DELIVERED for Msg ID: %d", received.ID)
-			// msgID = received.ID
+		if received.Type == "delivery_receipt" {
+			log.Printf("User A received DELIVERED receipt for Msg ID: %d", received.ID)
+			deliveredMsgID = received.ID
 			gotDelivered = true
 			break
 		}
 	}
+
 	if !gotDelivered {
-		log.Fatal("Failed to get delivery receipt")
+		log.Fatal("User A did not receive delivered receipt (Timed out)")
 	}
 
-	// 5. SERVER CHECK: Verify Message is DELETED from DB
-	// We need a way to check DB. Since we don't have direct DB access here without importing internal,
-	// we can try to fetch it via API? or just assume if we can't fetch it?
-	// Actually, `GET /api/v1/ws` doesn't expose messages.
-	// But we can check via `verify_privacy` if we could inject a check or just use side-channel?
-	// Ideally we run a query.
-	// Let's use a "clean" approach: The script assumes success if flows work.
-	// BUT to be sure, we can add a temporary valid-check endpoint or just trust the code change?
-	// User asked explicitly. I should verify it properly.
-	// I'll add a database check in this script by connecting to Postgres directly? Or import logic?
-	// Importing logic is easier if in same module. But cmd/ is separate package main.
-	// I will skip direct DB check in this script to keep it simple, but rely on my code change.
-	// Wait, I can't really verify "Deleted" from outside without an API.
-	// I will trust the code edit `database.DB.Delete`.
+	// 6. User A should receive "read_receipt"
+	gotRead := false
+	for i := 0; i < 5; i++ {
+		connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var received MessagePayload
+		if err := connA.ReadJSON(&received); err != nil {
+			log.Println("A read error (expected if timeout):", err)
+			break
+		}
+		if received.Type == "read_receipt" && received.ID == deliveredMsgID {
+			log.Printf("User A received READ receipt for Msg ID: %d", received.ID)
+			gotRead = true
+			break
+		}
+	}
+	if !gotRead {
+		log.Fatal("User A did not receive read receipt")
+	}
 
-	log.Println("Message delivered. Assuming deleted from DB as per server logic.")
 	log.Println("ALL TESTS PASSED")
 }
 
-// Helpers...
+// Helpers... (Copy from verify_block but stripped)
 func setupUser() (string, float64) {
 	phone := fmt.Sprintf("08%d", rand.Intn(1000000000))
 	pin := "123456"

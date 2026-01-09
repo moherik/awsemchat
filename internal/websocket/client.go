@@ -52,11 +52,15 @@ func (c *Client) ReadPump() {
 			continue
 		}
 
+		log.Printf("DEBUG READ Payload: %+v", payload) // Debug Print
+
 		// Enforce SenderID based on auth
 		payload.SenderID = c.UserID
 
+		// Send to Hub directly. Hub decides (Send or Store).
+		// We DO NOT persist here anymore to respect privacy request.
 		if payload.GroupID != nil {
-			// Fan-out to group members (Privacy Mode: Treat as individual ephemeral messages)
+			// Group Chat
 			groupRep := repository.NewGroupRepository()
 			members, err := groupRep.GetGroupMembers(*payload.GroupID)
 			if err != nil {
@@ -76,8 +80,6 @@ func (c *Client) ReadPump() {
 
 		} else {
 			// Private Chat
-			// Send to Hub directly. Hub decides (Send or Store).
-			// We DO NOT persist here anymore to respect privacy request.
 			c.Hub.Unicast <- &payload
 		}
 	}

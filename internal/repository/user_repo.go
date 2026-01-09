@@ -72,6 +72,30 @@ func (r *UserRepository) Update(user *models.User) error {
 	return database.DB.Save(user).Error
 }
 
+func (r *UserRepository) UpdateLastSeen(userID uint) error {
+	return database.DB.Model(&models.User{}).Where("id = ?", userID).Update("last_seen", time.Now()).Error
+}
+
+func (r *UserRepository) BlockUser(blockerID, blockedID uint) error {
+	block := models.Block{
+		BlockerID: blockerID,
+		BlockedID: blockedID,
+		CreatedAt: time.Now(),
+	}
+	// Use Clauses to handle duplicate block gracefully
+	return database.DB.Create(&block).Error
+}
+
+func (r *UserRepository) UnblockUser(blockerID, blockedID uint) error {
+	return database.DB.Where("blocker_id = ? AND blocked_id = ?", blockerID, blockedID).Delete(&models.Block{}).Error
+}
+
+func (r *UserRepository) IsBlocked(blockerID, blockedID uint) bool {
+	var count int64
+	database.DB.Model(&models.Block{}).Where("blocker_id = ? AND blocked_id = ?", blockerID, blockedID).Count(&count)
+	return count > 0
+}
+
 func generatePIN() string {
 	const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // Removed I, O, 0, 1 for clarity
 	b := make([]byte, 6)

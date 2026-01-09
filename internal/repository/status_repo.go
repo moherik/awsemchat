@@ -1,9 +1,10 @@
 package repository
 
 import (
+	"time"
+
 	"awsemchat/internal/database"
 	"awsemchat/internal/models"
-	"time"
 )
 
 type StatusRepository struct{}
@@ -13,18 +14,33 @@ func NewStatusRepository() *StatusRepository {
 }
 
 func (r *StatusRepository) Create(status *models.Status) error {
-	status.CreatedAt = time.Now()
-	// Default expiry 24 hours if not set
-	if status.ExpiresAt.IsZero() {
-		status.ExpiresAt = time.Now().Add(24 * time.Hour)
+	tx := database.DB.Begin()
+
+	status.ExpiresAt = time.Now().Add(24 * time.Hour) // Enforce 24h expiry
+	if err := tx.Create(status).Error; err != nil {
+		tx.Rollback()
+		return err
 	}
-	return database.DB.Create(status).Error
+
+	return tx.Commit().Error
 }
 
-func (r *StatusRepository) GetFeed(userID uint) ([]models.Status, error) {
-	// Ideally: fetch only from contacts.
-	// MVP: Fetch all statuses that haven't expired.
+func (r *StatusRepository) GetActiveStatuses(userID uint) ([]models.Status, error) {
 	var statuses []models.Status
-	err := database.DB.Where("expires_at > ?", time.Now()).Order("created_at desc").Find(&statuses).Error
-	return statuses, err
+
+	err := database.DB.Table("statuses").
+		Select("statuses.*").
+		Preload("Products").
+		Order("statuses.created_at desc").
+		Find(&statuses).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+
+func (r *StatusRepository) CleanupExpired() error {
+	// Hard Delete expired statuses
+	return database.DB.Where("expires_at < ?", time.Now()).Delete(&models.Status{}).Error
 }

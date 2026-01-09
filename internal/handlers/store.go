@@ -14,6 +14,7 @@ var storeRepo = repository.NewStoreRepository()
 
 func RegisterStoreRoutes(g *echo.Group) {
 	g.POST("/products", CreateListing)
+	g.GET("/products/:id", GetProduct)
 	g.GET("/users/:id/products", GetStore)
 	g.POST("/orders", BuyItem)
 }
@@ -61,6 +62,21 @@ func GetStore(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, products)
+}
+
+func GetProduct(c echo.Context) error {
+	idParam := c.Param("id")
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid Product ID"})
+	}
+
+	product, err := storeRepo.GetProduct(uint(id))
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Product not found"})
+	}
+
+	return c.JSON(http.StatusOK, product)
 }
 
 type BuyItemRequest struct {

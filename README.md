@@ -40,19 +40,27 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 
 ## Features Verification
 
-### 1. Authentication (PIN & Identity)
-- **Register**: `POST /api/v1/auth/register` (Returns Token + User with unique PIN)
-- **Login**: `POST /api/v1/auth/login`
+### 1. Authentication (OTP & PIN)
+- **Send OTP**: `POST /api/v1/auth/otp/send` (Body: `{ "phone": "..."}`). Mock sends "123456".
+- **Verify OTP**: `POST /api/v1/auth/otp/verify` (Body: `{ "phone": "...", "code": "123456" }`). Returns `verification_token`.
+- **Register**: `POST /api/v1/auth/register` (Body: `{ "verification_token": "...", "name": "...", "password": "PIN" }`).
+- **Login**: `POST /api/v1/auth/login` (Body: `{ "verification_token": "...", "password": "PIN" }`). Returns `token` (Access) and `refresh_token`.
+- **Refresh Token**: `POST /api/v1/auth/token/refresh` (Body: `{ "refresh_token": "..." }`). Returns new `token`.
 - **Profile**: `GET /api/v1/profile`
 
 ### 2. Messaging (E2E & WebSocket)
 - **Keys**: Client uploads keys to `POST /api/v1/keys`. Other users fetch via `GET /api/v1/keys/prekey/:id`.
-- **Private Chat**: Connect to `ws://localhost:8080/api/v1/ws`. Send JSON `{"receiver_id": 2, "content": "..."}`.
-- **Group Chat**: 
-    - Create: `POST /api/v1/groups`
-    - Join: `POST /api/v1/groups/:id/join`
-    - Leave: `POST /api/v1/groups/:id/leave`
-    - Send: via WS `{"group_id": 1, "content": "..."}`
+- **WebSocket**: `/api/v1/ws` (Requires `Authorization: Bearer <token>` header).
+  - **Send Message**: `{ "receiver_id": 2, "content": "base64...", "type": "text" }`
+  - **Context Reply**: `"reply_to_status_id": 1` or `"reply_to_product_id": 1`
+  - **Server Ack**: `{ "type": "message_ack", "id": 123, "status": "sent" }` (Received immediately after sending)
+  - **Read Receipt**: `{ "type": "read_receipt", "id": 123, "receiver_id": 1 }` (Send to original sender)
+  - **Receive Message**: `{ "sender_id": 1, "status": "sent", ... }`
+  - **Status Update**: `{ "type": "message_status", "status": "delivered", "id": 123 }`
+
+#### Blocks
+- **Block User**: `POST /api/v1/users/block` - `{ "user_id": 123 }`
+- **Unblock User**: `POST /api/v1/users/unblock` - `{ "user_id": 123 }`
 
 ### 3. Wallet & Store
 - **Send Money**: `POST /api/v1/wallet/send` (Atomic transfer).
@@ -70,6 +78,10 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 
 ## Verified Scenarios
 - [x] User Registration & PIN Generation
+- [x] **Phone Verification (OTP)**
+    - [x] Verified Send/Verify OTP flow.
+    - [x] Verified Register requires OTP token.
+    - [x] Verified Login requires OTP token.
 - [x] E2E Key Upload & Fetch
 - [x] Real-time Private Messaging (User 1 -> User 3)
 - [x] Group Messaging (Fan-out to members)
@@ -101,6 +113,9 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 - [x] APIs - E2E Encryption Support (Signal Protocol compatible storage)
     - [x] Store PreKeys & Identity Keys
     - [x] Fetch PreKeys
+- [x] APIs - Core Messaging Features
+    - [x] Realtime Typing Indicators (WebSocket Ephemeral)
+    - [x] User Presence (Online Status & Last Seen)
 - [x] APIs - Messaging
     - [x] Private Chat WebSocket Handler
     - [x] Message Persistence (Encrypted blobs)

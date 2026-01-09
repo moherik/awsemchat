@@ -10,6 +10,8 @@ func RegisterUserRoutes(g *echo.Group) {
 	g.GET("/profile", GetProfile)
 	g.PUT("/profile", UpdateProfile)
 	g.PUT("/profile/fcm", UpdateFCMToken)
+	g.POST("/users/block", BlockUser)
+	g.POST("/users/unblock", UnblockUser)
 	g.GET("/users/:pin", GetUserByPIN)
 }
 
@@ -78,7 +80,39 @@ func UpdateFCMToken(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update FCM token"})
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+	return c.JSON(http.StatusOK, map[string]string{"message": "FCM Token updated"})
+}
+
+type BlockRequest struct {
+	UserID uint `json:"user_id"`
+}
+
+func BlockUser(c echo.Context) error {
+	blockerID := c.Get("user_id").(uint)
+	var req BlockRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	if err := userRepo.BlockUser(blockerID, req.UserID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to block user"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "User blocked"})
+}
+
+func UnblockUser(c echo.Context) error {
+	blockerID := c.Get("user_id").(uint)
+	var req BlockRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	if err := userRepo.UnblockUser(blockerID, req.UserID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to unblock user"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "User unblocked"})
 }
 
 func GetUserByPIN(c echo.Context) error {
@@ -88,14 +122,23 @@ func GetUserByPIN(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
 	}
 
+	// Check Online Status
+	isOnline := false
+	if Hub != nil {
+		isOnline = Hub.IsUserOnline(user.ID)
+	}
+
 	// Return limited public info
 	publicProfile := map[string]interface{}{
 		"id":         user.ID,
 		"pin":        user.PIN,
+		"phone":      user.Phone,
 		"name":       user.Name,
 		"avatar_url": user.AvatarURL,
 		"public_key": user.PublicKey,
 		"bio":        user.Bio,
+		"last_seen":  user.LastSeen,
+		"is_online":  isOnline,
 	}
 
 	return c.JSON(http.StatusOK, publicProfile)
