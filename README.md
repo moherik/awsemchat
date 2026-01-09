@@ -53,14 +53,14 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 - **WebSocket**: `/api/v1/ws` (Requires `Authorization: Bearer <token>` header).
   - **Send Message**: `{ "receiver_id": 2, "content": "base64...", "type": "text" }`
   - **Context Reply**: `"reply_to_status_id": 1` or `"reply_to_product_id": 1`
-  - **Server Ack**: `{ "type": "message_ack", "id": 123, "status": "sent" }` (Received immediately after sending)
-  - **Read Receipt**: `{ "type": "read_receipt", "id": 123, "receiver_id": 1 }` (Send to original sender)
-  - **Receive Message**: `{ "sender_id": 1, "status": "sent", ... }`
-  - **Status Update**: `{ "type": "message_status", "status": "delivered", "id": 123 }`
+  - **Server Ack**: `{ "type": "message_ack", "id": 123, "temp_id": "..." }` (Immediate confirmation)
+  - **Delivery Receipt**: `{ "type": "delivery_receipt", "id": 123, "receiver_id": 1 }` (Client sends upon receipt)
+  - **Read Receipt**: `{ "type": "read_receipt", "id": 123, "receiver_id": 1 }` (Client sends upon read)
+  - **Receive Message**: `{ "sender_id": 1, "content": "...", "type": "text", ... }`
 
 #### Blocks
-- **Block User**: `POST /api/v1/users/block` - `{ "user_id": 123 }`
-- **Unblock User**: `POST /api/v1/users/unblock` - `{ "user_id": 123 }`
+- **Block User**: `POST /api/v1/users/block` - `{ "user_id": 123 }`. Prevents messaging and status viewing.
+- **Unblock User**: `POST /api/v1/users/unblock` - `{ "user_id": 123 }`. Restores access.
 
 ### 3. Wallet & Store
 - **Send Money**: `POST /api/v1/wallet/send` (Atomic transfer).
@@ -91,9 +91,15 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 - [x] **Privacy Mode (Auto-Delete)**
     - [x] Verified that messages to online users are NOT stored in DB.
     - [x] Verified that messages to offline users are stored temporarily and deleted immediately after delivery.
+- [x] **Message Receipts**
+    - [x] Server Ack ("Centang 1") - Immediate `message_ack`.
+    - [x] Delivery Receipt ("Centang 2") - End-to-End verified.
+    - [x] Read Receipt ("Blue Check") - End-to-End verified.
+- [x] **User Blocking**
+    - [x] Verified Blocked users cannot send messages (Dropped by Hub).
 - [x] **Push Notifications (FCM)**
     - [x] Confirmed `UpdateFCMToken` saves user device tokens.
-    - [x] Confirmed Offline logic triggers real Firebase calls (`[MOCK]` log or `FCM Client` send).
+    - [x] Confirmed Offline logic triggers real Firebase calls.
 
 ---
 
@@ -105,7 +111,7 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
     - [x] Setup Database Connection (Postgres) & Migrations
 - [x] Core Architecture & Database Design
     - [x] Design Database Schema (Users, Wallets, Messages, Groups, Keys, Status)
-    - [ ] Setup WebSocket Hub/Manager
+    - [x] Setup WebSocket Hub/Manager
 - [x] APIs - Authentication & Identity
     - [ ] Phone Verification (Mock/Stub)
     - [x] Registration with PIN Generation
@@ -142,3 +148,10 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 - [x] Verification
     - [x] Integration Tests for Auth & Messaging
     - [x] Manual Verification with WebSocket Client
+
+# Roadmap / Future Features
+- [ ] **Search**: User and Message search functionality.
+- [ ] **Voice & Video Calls**: WebRTC signaling integration.
+- [ ] **Group Enhancements**: Admin roles, avatars, invite links.
+- [ ] **Rich Media**: Stickers, GIFs, and Voice Notes.
+- [ ] **Multi-Device**: Device linking and history sync.
