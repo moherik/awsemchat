@@ -7,7 +7,8 @@ import (
 )
 
 type Claims struct {
-	UserID uint `json:"user_id"`
+	UserID   uint `json:"user_id"`
+	DeviceID uint `json:"device_id"`
 	jwt.RegisteredClaims
 }
 
@@ -16,9 +17,10 @@ type VerificationClaims struct {
 	jwt.RegisteredClaims
 }
 
-func GenerateAccessToken(userID uint, secret string) (string, error) {
+func GenerateAccessToken(userID, deviceID uint, secret string) (string, error) {
 	claims := &Claims{
-		UserID: userID,
+		UserID:   userID,
+		DeviceID: deviceID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)), // Short lived
 		},
@@ -28,9 +30,10 @@ func GenerateAccessToken(userID uint, secret string) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-func GenerateRefreshToken(userID uint, secret string) (string, error) {
+func GenerateRefreshToken(userID, deviceID uint, secret string) (string, error) {
 	claims := &Claims{
-		UserID: userID,
+		UserID:   userID,
+		DeviceID: deviceID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)), // 7 Days
 		},

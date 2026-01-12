@@ -24,7 +24,9 @@ type Client struct {
 	// Buffered channel of outbound messages.
 	Send chan *MessagePayload
 	// Identity
-	UserID uint
+	// Identity
+	UserID   uint
+	DeviceID uint
 }
 
 func (c *Client) ReadPump() {

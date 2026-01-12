@@ -24,6 +24,7 @@ var (
 
 func ServeWS(c echo.Context) error {
 	userID := c.Get("user_id").(uint)
+	deviceID := c.Get("device_id").(uint)
 
 	w := c.Response().Writer
 	r := c.Request()
@@ -34,10 +35,11 @@ func ServeWS(c echo.Context) error {
 	}
 
 	client := &websocket.Client{
-		Hub:    Hub,
-		Conn:   conn,
-		Send:   make(chan *websocket.MessagePayload, 256),
-		UserID: userID,
+		Hub:      Hub,
+		Conn:     conn,
+		Send:     make(chan *websocket.MessagePayload, 256),
+		UserID:   userID,
+		DeviceID: deviceID,
 	}
 
 	client.Hub.Register <- client

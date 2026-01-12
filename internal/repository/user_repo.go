@@ -96,6 +96,21 @@ func (r *UserRepository) IsBlocked(blockerID, blockedID uint) bool {
 	return count > 0
 }
 
+func (r *UserRepository) SearchUsers(query string, excludeUserID uint) ([]models.User, error) {
+	var users []models.User
+	// ILIKE for case-insensitive search on Postgres (use LIKE for SQLite/others if needed, but we use Postgres)
+	// Query matches Name OR PIN OR Phone.
+	searchQuery := "%" + query + "%"
+	err := database.DB.Where("id != ? AND (name ILIKE ? OR pin ILIKE ? OR phone ILIKE ?)", excludeUserID, searchQuery, searchQuery, searchQuery).
+		Limit(20).
+		Find(&users).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 func generatePIN() string {
 	const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // Removed I, O, 0, 1 for clarity
 	b := make([]byte, 6)

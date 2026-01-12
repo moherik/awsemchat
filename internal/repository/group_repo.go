@@ -26,6 +26,7 @@ func (r *GroupRepository) Create(group *models.Group) error {
 		member := models.GroupMember{
 			GroupID:  group.ID,
 			UserID:   group.AdminID,
+			Role:     "admin",
 			JoinedAt: time.Now(),
 		}
 		if err := tx.Create(&member).Error; err != nil {
@@ -83,4 +84,36 @@ func (r *GroupRepository) GetUserGroups(userID uint) ([]models.Group, error) {
 	}
 
 	return groups, nil
+}
+
+func (r *GroupRepository) GetByID(id uint) (*models.Group, error) {
+	var group models.Group
+	if err := database.DB.First(&group, id).Error; err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
+
+func (r *GroupRepository) GetByInviteCode(code string) (*models.Group, error) {
+	var group models.Group
+	if err := database.DB.Where("invite_code = ?", code).First(&group).Error; err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
+
+func (r *GroupRepository) Update(group *models.Group) error {
+	return database.DB.Save(group).Error
+}
+
+func (r *GroupRepository) GetMember(groupID, userID uint) (*models.GroupMember, error) {
+	var member models.GroupMember
+	if err := database.DB.Where("group_id = ? AND user_id = ?", groupID, userID).First(&member).Error; err != nil {
+		return nil, err
+	}
+	return &member, nil
+}
+
+func (r *GroupRepository) UpdateMember(member *models.GroupMember) error {
+	return database.DB.Save(member).Error
 }

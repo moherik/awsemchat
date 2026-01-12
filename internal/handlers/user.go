@@ -12,6 +12,7 @@ func RegisterUserRoutes(g *echo.Group) {
 	g.PUT("/profile/fcm", UpdateFCMToken)
 	g.POST("/users/block", BlockUser)
 	g.POST("/users/unblock", UnblockUser)
+	g.GET("/users/search", SearchUsers)
 	g.GET("/users/:pin", GetUserByPIN)
 }
 
@@ -142,4 +143,33 @@ func GetUserByPIN(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, publicProfile)
+}
+
+func SearchUsers(c echo.Context) error {
+	userID := c.Get("user_id").(uint)
+	query := c.QueryParam("q")
+	if query == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Query parameter 'q' is required"})
+	}
+
+	users, err := userRepo.SearchUsers(query, userID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Search failed"})
+	}
+
+	// Santize and Limit
+	var results []map[string]interface{}
+	for _, u := range users {
+		results = append(results, map[string]interface{}{
+			"id":         u.ID,
+			"pin":        u.PIN,
+			"name":       u.Name,
+			"avatar_url": u.AvatarURL,
+			// Exclude phone number in listing? Maybe included for contact sync.
+			// Including for now to verify search.
+			"phone": u.Phone,
+		})
+	}
+
+	return c.JSON(http.StatusOK, results)
 }

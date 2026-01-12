@@ -100,6 +100,27 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
 - [x] **Push Notifications (FCM)**
     - [x] Confirmed `UpdateFCMToken` saves user device tokens.
     - [x] Confirmed Offline logic triggers real Firebase calls.
+- [x] **Search**
+    - [x] User Search by PIN, Name, Phone (`GET /users/search`).
+    - [x] Verified limiting results to public fields.
+- [x] **Voice & Video Signaling**
+    - [x] WebRTC Signaling Relay (`call_offer`, `call_answer`, `ice_candidate`).
+    - [x] Call Logging (Start/End events).
+- [x] **Group Enhancements**
+    - [x] Invite Codes (Generate/Rotate).
+    - [x] Join via Code.
+    - [x] Admin Roles (Promote/Kick).
+- [x] **Rich Media**
+    - [x] Verified Sticker, GIF, and Audio Blob transmission.
+    - [x] Verified persistence of binary content.
+- [x] **Multi-Device Support**
+    - [x] Verified Device ID generation and JWT claims.
+    - [x] Verified Message Fan-out to multiple devices.
+    - [x] Verified Simultaneous WebSocket connections.
+- [x] **Device Linking**
+    - [x] Verified QR Code generation (Web Client).
+    - [x] Verified QR Scan & Link (Phone Client).
+    - [x] Verified Automatic Token Bootstrap (Server -> Web).
 
 ---
 
@@ -113,7 +134,7 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
     - [x] Design Database Schema (Users, Wallets, Messages, Groups, Keys, Status)
     - [x] Setup WebSocket Hub/Manager
 - [x] APIs - Authentication & Identity
-    - [ ] Phone Verification (Mock/Stub)
+    - [x] Review & Finalize Phone Verification
     - [x] Registration with PIN Generation
     - [x] User Profile & Settings
 - [x] APIs - E2E Encryption Support (Signal Protocol compatible storage)
@@ -127,31 +148,35 @@ This project is a secure, high-performance Chat Backend built with **Go (Golang)
     - [x] Message Persistence (Encrypted blobs)
     - [x] Group Chat Management (Create, Join, Leave)
     - [x] Group Messaging
-- [x] APIs - Media
+- [x] APIs - Media & Rich Content
     - [x] Embedded Media (Base64 over WebSocket)
+    - [x] Stickers, GIFs, Voice Notes Support
 - [x] APIs - Features
     - [x] Wallet System (Balance, Transaction, Send Money)
     - [x] Store/Marketplace
         - [x] Product Management (CRUD: Title, valid Price, Images)
         - [x] Purchasing Flow (Order creation + Wallet deduction)
     - [x] Status/Stories (Create, View, Expire)
-    - [x] Status/Stories (Create, View, Expire)
     - [x] Promotions (Broadcast/Ads)
-    - [x] Group Chat - Leave Group
-    - [x] Profile - Edit (Name, Bio, Photo)
+    - [x] Group Chat - Leave Group, Roles, Invites
     - [x] Profile - Edit (Name, Bio, Photo)
     - [x] Wallet - Request Money & Payment Links
     - [x] Notifications (Real FCM Implementation)
+    - [x] Search Functionality
 - [x] Privacy Enhancements
     - [x] Ephemeral Messaging (No persistence for online users)
     - [x] Store-and-Forward (Auto-delete after delivery for offline users)
 - [x] Verification
     - [x] Integration Tests for Auth & Messaging
     - [x] Manual Verification with WebSocket Client
+- [x] **Multi-Device Support** (Phase 9)
+    - [x] Data Modeling & Auth Updates
+    - [x] Hub Fan-out & Sync logic
+- [x] **Device Linking (QR)** (Phase 10)
+    - [x] Implementation of `/auth/ws` and `/devices/link`.
+    - [x] LinkManager for session handling.
 
 # Roadmap / Future Features
-- [ ] **Search**: User and Message search functionality.
-- [ ] **Voice & Video Calls**: WebRTC signaling integration.
-- [ ] **Group Enhancements**: Admin roles, avatars, invite links.
-- [ ] **Rich Media**: Stickers, GIFs, and Voice Notes.
-- [ ] **Multi-Device**: Device linking and history sync.
+- [ ] History Sync (Restore messages on new device).
+
+

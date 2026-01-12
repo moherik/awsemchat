@@ -19,6 +19,16 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type Device struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"index;not null" json:"user_id"`
+	DeviceUUID string    `gorm:"index;not null" json:"device_uuid"` // Unique ID from client (e.g. UUID)
+	Name       string    `json:"name"`                              // e.g. "Pixel 6", "Chrome"
+	FCMToken   string    `json:"fcm_token"`                         // Token for this specific device
+	LastSeen   time.Time `json:"last_seen"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type Wallet struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	UserID    uint      `gorm:"uniqueIndex;not null" json:"user_id"`
@@ -77,6 +87,8 @@ type Group struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	AdminID     uint      `json:"admin_id"`
+	AvatarURL   string    `json:"avatar_url"`
+	InviteCode  string    `gorm:"uniqueIndex" json:"invite_code"` // e.g. "A1B2C"
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -84,6 +96,7 @@ type GroupMember struct {
 	ID       uint      `gorm:"primaryKey" json:"id"`
 	GroupID  uint      `gorm:"uniqueIndex:idx_group_user" json:"group_id"`
 	UserID   uint      `gorm:"uniqueIndex:idx_group_user" json:"user_id"`
+	Role     string    `gorm:"default:'member'" json:"role"` // "admin", "member"
 	JoinedAt time.Time `json:"joined_at"`
 }
 
@@ -92,7 +105,7 @@ type Status struct {
 	UserID    uint      `gorm:"index" json:"user_id"`
 	Content   []byte    `json:"content"`
 	Caption   string    `json:"caption"`
-	Products  []Product `gorm:"many2many:status_products;" json:"products,omitempty"`
+	Products  []Product `gorm:"many2many:status_products;constraint:OnDelete:CASCADE;" json:"products,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -104,6 +117,10 @@ type E2EKeys struct {
 	KeyType   string `json:"key_type"` // "prekey", "signed_prekey"
 	KeyID     uint   `json:"key_id"`
 	PublicKey string `json:"public_key"`
+}
+
+func (E2EKeys) TableName() string {
+	return "e2e_keys"
 }
 
 type Promotion struct {
