@@ -68,3 +68,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 `git diff --check` also passed. No mobile files changed; mobile lint/typecheck was not used as security evidence. Initial worktree-default Cargo target failed sandbox writes; using the writable temporary target produced the result above. Sandbox `adb devices -l` failed socket startup; authorized escalated retry returned `List of devices attached` with an empty list. Neither result establishes native security integration.
+
+### Identity-verification policy approved 2026-10-10
+
+Accepted friends may chat without manually comparing safety codes. QR/safety-code comparison remains optional. Clients must persist the first pinned identity and its history; key changes reset verification, warn clearly and stop sending until acknowledged. Pending messages must never silently be re-encrypted to changed keys. Unverified trust-on-first-use does not protect against active server key substitution. This product decision does not validate the native crypto bridge or remove the native gate.
