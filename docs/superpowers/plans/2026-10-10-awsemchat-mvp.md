@@ -8,7 +8,7 @@
 
 **Tech Stack:** Expo, React Native, TypeScript, Go, SQLite, PostgreSQL, Supabase Storage; cryptographic library and provider dependencies selected through Task 1 evidence.
 
-**Spec:** `docs/superpowers/specs/2026-10-10-awsemchat-mvp-design.md` (user approved 2026-10-10).
+**Spec:** `docs/superpowers/specs/2026-10-10-awsemchat-mvp-design.md` (user approved 2026-10-10). Presentation and Android music direction are superseded by `docs/technical/ui-backend-handoff.md`; privacy rules remain binding. Task1 status: BLOCKED for native security validation; see `validation/e2e/README.md` for durable evidence and the next harness slice.
 
 ## Global Constraints
 
@@ -22,7 +22,7 @@
 - PING/PONG only in private chats.
 - Circle messages show latest profile status; no Now Playing in Circle bubbles.
 - All three delivery stages in the spec remain in the MVP.
-- Anti Slop core/UI rules and classic BBM direction govern UI implementation.
+- Preserve the approved UI in `docs/technical/ui-backend-handoff.md`; no redesign. Anti Slop enforcement is disabled for the currently authorized session per user override; privacy constraints remain binding.
 - No external deployment, credential creation, provider purchase, or app-store submission is included in plan execution without scoped authorization.
 
 ## Review Focus
@@ -35,7 +35,7 @@
 
 ## Execution structure and file ownership
 
-The workspace initially contains only the specification and is not a Git repository. Initialize Git at execution time and commit narrowly scoped changes; never introduce credentials. Use `apps/mobile` for the Expo application and `services/api` for Go. Keep product features together inside each platform, with domain/use-case, persistence, and transport boundaries within each backend feature. `docs/technical` owns reviewed provider and security decisions.
+The approved UI demo is committed in Git (baseline `89fac6d`). Use the managed production-foundation worktree and commit narrowly scoped changes; never introduce credentials or replace the approved UI. Use `apps/mobile` for the Expo application and `services/api` for Go. Keep product features together inside each platform, with domain/use-case, persistence, and transport boundaries within each backend feature. `docs/technical` owns reviewed provider and security decisions.
 
 This document sequences the whole MVP. Task 1 produces the concrete security/provider contracts required to expand later slices into executable steps. Later task interfaces below are proposed application interfaces, not claims that a particular library supports them. Do not invent library calls or silently substitute fake encryption. Expand each dependent slice into a short subsystem plan using the validated contracts before implementing it.
 
@@ -45,8 +45,8 @@ This document sequences the whole MVP. Task 1 produces the concrete security/pro
 
 **Interfaces:** Produces a reviewed protocol choice, native integration/build instructions, ciphertext event schema, audience/key lifecycle, replacement-device flow, encrypted backup format, and provider constraints. All subsequent tasks consume these decisions.
 
-- [ ] Consult official current protocol, Expo, SQLite encryption, Supabase, Drive, and Spotify documentation; record dated source links and distinguish verified capability from inference.
-- [ ] Compare established protocol implementations for native Android/Expo compatibility, license, private chats, Circle epochs, and audience-restricted Moments. Explicitly identify server-visible metadata.
+- [x] Consult official current protocol, Expo57, SQLite encryption, Supabase, Drive, and Spotify documentation; record dated source links and distinguish verified capability from inference. See provider-feasibility and E2E design (2026-10-10).
+- [x] Compare established protocol implementations for native Android/Expo compatibility, license, private chats, Circle epochs, and audience-restricted Moments. Explicitly identify server-visible metadata. Candidate remains conditional on native/security review.
 - [ ] Run a minimal Android integration probe: Alice/Bob exchange authenticated ciphertext; outsider cannot decrypt; adding Carol does not unlock earlier content; removing Bob prevents future decryptions; tampered ciphertext is rejected. Record commands and actual output.
 - [ ] Validate SQLite encryption and backup export/import on a device. Assert wrong secret fails, valid import restores test history, and interrupted import leaves prior history usable.
 - [ ] Validate Spotify public-release access and foreground/background update constraints, Drive scopes and scheduling limits, and on-device background removal. Do not equate developer-mode access with public availability.
@@ -141,16 +141,18 @@ This document sequences the whole MVP. Task 1 produces the concrete security/pro
 - [ ] Implement settings, alerts, profile distribution, block/unfriend/report, and restricted notification previews.
 - [ ] Verify silent/DND behavior on Android, permission denial, blocked contacts, and selected-content report disclosure. Commit.
 
-## Task 10: Spotify Now Playing
+## Task 10: Android music-app Now Playing
 
-**Files:** `apps/mobile/src/features/music/`, `apps/mobile/src/features/profile/now-playing.tsx`, any Go music adapter justified by Task 1 token/audience design.
+The UI handoff records the owner's choice to explore Android music sessions; this supersedes Spotify Web API as the required production provider. Spotify public-release eligibility remains documented, not assumed. Preserve future iOS interface without claiming equivalent provider support.
 
-**Interfaces:** `connectSpotify(): Promise<ConnectionResult>`; `setMusicSharing(enabled: boolean): Promise<void>`; `getNowPlaying(): Promise<PlaybackState>`; distribution uses Task 1 encrypted profile audience contract.
+**Files:** `apps/mobile/src/features/music/`, local Android music-session Expo module/config plugin, encrypted profile update adapter.
 
-- [ ] Expand the slice plan only after public-release eligibility and background behavior are demonstrated; preserve user choice if restrictions require redesign.
-- [ ] Write failing assertions: opt-in required; pause stops sharing; revoked token leads to reconnect state; stopped playback clears stale track; unaccepted friend gets no playback; Circle bubble never renders playback.
-- [ ] Implement authorized connection, automatic updates within validated limits, private-profile rendering, and disconnect/token cleanup.
-- [ ] Verify provider-backed foreground/background cases and expired authorization on Android. Commit.
+**Interfaces:** proposed `requestMusicAccess()`, `setMusicSharing(enabled)`, `getNowPlaying()` and short-lived encrypted accepted-friend updates. Permission grant is separate from sharing consent; these are application interfaces, not SDK calls.
+
+- [ ] Expand after Task1 security gate and native MediaSessionManager/NotificationListenerService feasibility. Validate permission scope, selected players, missing metadata, stop/expiry and device background limits.
+- [ ] Assert sharing opt-in required; pause/revocation/sign-out clears; stale track expires offline; unaccepted friend gets no playback; Circle bubble never renders playback. Never consume general notification bodies.
+- [ ] Implement approved native integration, foreground/background updates within validated limits, encrypted friend-profile rendering and disconnect cleanup.
+- [ ] Verify on real Android device with multiple players, force-stop/Doze/revocation; keep broad permission explanation accurate. No provider credentials/publishing without scoped authorization.
 
 ## Task 11: UI integration and Android release validation
 
@@ -158,11 +160,11 @@ This document sequences the whole MVP. Task 1 produces the concrete security/pro
 
 **Interfaces:** Unified Chats/Friends/You navigation, All/Private/Circles filters, Chat/Moments conversation navigation, accessible themed controls.
 
-- [ ] Apply Anti Slop UI plus Expo UI/native guidance; preserve classic BBM identity and functional category pills. Use Energy 2/Rhythm 1/Motion 1 with written reasons for visual decisions.
+- [ ] Integrate production data into the approved UI handoff and verify Expo/native behavior; preserve visual layout and approved interactions. No UI redesign in production integration.
 - [ ] Verify real functional screens against all 12 spec acceptance scenarios, not fabricated activity. Check empty/loading/error, text scaling, TalkBack, both themes, permissions, offline behavior, and every control.
 - [ ] Run Go tests/integration tests, mobile tests/type checks, and actual Android build; record versions, commands, outputs, and device walkthrough evidence. Address failures before completion claims.
 - [ ] Complete protocol/security review, credential configuration checklist, and product launch policy requirements. List remaining external access or user decisions accurately.
-- [ ] Run the Anti Slop core Delivery Gate and UI supplement against the real application. Commit verified work and hand over the runnable Android MVP. Publishing requires its own scoped authorization.
+- [ ] Validate approved UI interactions against real production state, commit verified work and hand over runnable Android MVP. Current session disables Anti Slop enforcement. Publishing requires its own scoped authorization.
 
 ## Self-review and handoff
 
