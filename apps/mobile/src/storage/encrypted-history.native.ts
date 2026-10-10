@@ -1,4 +1,5 @@
 import * as Crypto from 'expo-crypto';
+import { Directory } from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import * as SQLite from 'expo-sqlite';
 import { validateHistoryRecord } from './history-types';
@@ -18,20 +19,26 @@ async function generation(namespace: string): Promise<Generation> {
   return { name: `${namespace}-${Crypto.randomUUID()}.db`,
     key: Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('') };
 }
-async function connect(g: Generation) {
+async function openKeyed(g: Generation) {
   if (!/^[a-f0-9]{64}$/.test(g.key)) throw new Error('Invalid database key');
   const db = await SQLite.openDatabaseAsync(g.name, { useNewConnection: true });
   try {
     await db.execAsync(`PRAGMA key = "x'${g.key}'";`);
     const version = await db.getFirstAsync<{ cipher_version: string }>('PRAGMA cipher_version');
     if (!version?.cipher_version) throw new Error('SQLCipher unavailable; plaintext storage refused');
-    await db.getFirstAsync('SELECT count(*) FROM sqlite_master');
-    await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA temp_store = MEMORY;');
     return db;
   } catch (error) {
     await db.closeAsync();
     throw error;
   }
+}
+async function connect(g: Generation) {
+  const db = await openKeyed(g);
+  try {
+    await db.getFirstAsync('SELECT count(*) FROM sqlite_master');
+    await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA temp_store = MEMORY;');
+    return db;
+  } catch (error) { await db.closeAsync(); throw error; }
 }
 async function initialize(db: SQLite.SQLiteDatabase) {
   const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -103,6 +110,13 @@ export async function openEncryptedHistory(namespace: string) {
         } catch (recoveryError) { await db.closeAsync(); throw recoveryError; }
       }
     } else {
+      const databasePath: string = SQLite.defaultDatabaseDirectory;
+      if (!databasePath?.startsWith('/')) throw new Error('History directory unavailable');
+      const directory = new Directory(`file://${databasePath}`);
+      if (directory.exists && directory.list().some((entry) =>
+        entry.name.startsWith(`${namespace}-`) && /\.db(?:-wal|-shm|-journal)?$/.test(entry.name))) {
+        throw new Error('History recovery required: database keys are unavailable');
+      }
       journal = { version: 1, active: await generation(namespace), creating: true };
       // Persist the key before creating any history: interruption cannot strand an encrypted DB.
       await persist(journal);
@@ -188,8 +202,22 @@ export async function assertWrongKeyRejected(namespace: string) {
   const raw = await SecureStore.getItemAsync(`history.${namespace}`, options);
   if (!raw) throw new Error('Missing test history');
   const journal: Journal = JSON.parse(raw);
+  const correct = await connect(journal.active);
+  try {
+    const schema = await correct.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+    if (schema?.user_version !== 1) throw new Error('Missing test history schema');
+    await integrity(correct);
+  } finally { await correct.closeAsync(); }
   const wrong = { ...journal.active, key: (await generation(namespace)).key };
-  try { const db = await connect(wrong); await db.closeAsync(); }
-  catch { return; }
-  throw new Error('Wrong key was accepted');
+  const db = await openKeyed(wrong);
+  let rejected = false;
+  try {
+    try { await db.getFirstAsync('SELECT count(*) FROM sqlite_master'); }
+    catch (error) {
+      // SDK native SQLite reports SQLITE_NOTADB with this specific diagnostic.
+      if (!(error instanceof Error) || !/file is not a database/i.test(error.message)) throw error;
+      rejected = true;
+    }
+  } finally { await db.closeAsync(); }
+  if (!rejected) throw new Error('Wrong key was accepted');
 }

@@ -1,7 +1,7 @@
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -13,6 +13,11 @@ const directory = mkdtempSync(join(tmpdir(), 'awsem-history-'));
 const secrets = new Map();
 let failJournal = false;
 let cipherAvailable = true;
+let failOpenAfter = -1;
+let failCipherAfter = -1;
+let failCloseAfter = -1;
+let rejectWrongKey = false;
+const appliedKeys = new Map();
 globalThis.__historyTest = {
   secure: {
     WHEN_UNLOCKED_THIS_DEVICE_ONLY: 1,
@@ -23,16 +28,32 @@ globalThis.__historyTest = {
     },
   },
   crypto: { getRandomBytesAsync: async (size) => randomBytes(size), randomUUID },
+  filesystem: {
+    Directory: class { get exists() { return true; } list() { return readdirSync(directory).map((name) => ({ name })); } },
+  },
   sqlite: {
+    defaultDatabaseDirectory: directory,
     openDatabaseAsync: async (name) => {
+      if (failOpenAfter-- === 0) throw new Error('Synthetic database open failure');
+      let connectionKey;
       const db = new DatabaseSync(join(directory, name));
       const api = {
-        execAsync: async (sql) => db.exec(sql),
+        execAsync: async (sql) => {
+          const key = sql.match(/PRAGMA key = "x'([a-f0-9]+)'"/);
+          if (key) { connectionKey = key[1]; if (!appliedKeys.has(name)) appliedKeys.set(name, connectionKey); }
+          db.exec(sql);
+        },
         runAsync: async (sql, ...args) => db.prepare(sql).run(...args),
-        getFirstAsync: async (sql, ...args) => sql === 'PRAGMA cipher_version'
-          ? (cipherAvailable ? { cipher_version: 'host-stub' } : undefined) : db.prepare(sql).get(...args),
+        getFirstAsync: async (sql, ...args) => {
+          if (sql === 'PRAGMA cipher_version') {
+            if (failCipherAfter-- === 0) return undefined;
+            return cipherAvailable ? { cipher_version: 'host-stub' } : undefined;
+          }
+          if (rejectWrongKey && connectionKey !== appliedKeys.get(name)) throw new Error('file is not a database');
+          return db.prepare(sql).get(...args);
+        },
         getAllAsync: async (sql, ...args) => db.prepare(sql).all(...args),
-        closeAsync: async () => db.close(),
+        closeAsync: async () => { db.close(); if (failCloseAfter-- === 0) throw new Error('Synthetic database close failure'); },
         withTransactionAsync: async (operation) => {
           db.exec('BEGIN');
           try { await operation(); db.exec('COMMIT'); }
@@ -45,7 +66,7 @@ globalThis.__historyTest = {
   },
 };
 registerHooks({ resolve(specifier, context, next) {
-  const kind = { 'expo-sqlite': 'sqlite', 'expo-secure-store': 'secure', 'expo-crypto': 'crypto' }[specifier];
+  const kind = { 'expo-sqlite': 'sqlite', 'expo-secure-store': 'secure', 'expo-crypto': 'crypto', 'expo-file-system': 'filesystem' }[specifier];
   if (kind) {
     const names = Object.keys(globalThis.__historyTest[kind]);
     const source = names.map((name) => `export const ${name} = globalThis.__historyTest.${kind}.${name};`).join('\n');
@@ -54,7 +75,7 @@ registerHooks({ resolve(specifier, context, next) {
   if (specifier === './history-types') return next('./history-types.ts', context);
   return next(specifier, context);
 } });
-const { openEncryptedHistory } = await import('../src/storage/encrypted-history.native.ts');
+const { openEncryptedHistory, assertWrongKeyRejected } = await import('../src/storage/encrypted-history.native.ts');
 const record = { eventId: 'one', conversationId: 'chat', originalAudience: ['owner'],
   membershipInterval: 'interval', receivedAt: 1, payload: 'synthetic' };
 
@@ -130,6 +151,49 @@ test('cipher-less build and web refuse history storage', async () => {
   finally { cipherAvailable = true; }
   const web = await import('../src/storage/encrypted-history.ts');
   await assert.rejects(web.openEncryptedHistory('web-probe'), /native SQLCipher/);
+});
+
+test('lost journal requires recovery and preserves existing database bytes', async () => {
+  const store = await openEncryptedHistory('lost-journal');
+  await store.append([record]);
+  await store.close();
+  const journal = secrets.get('history.lost-journal');
+  const filename = JSON.parse(journal).active.name;
+  const before = readFileSync(join(directory, filename));
+  const names = readdirSync(directory);
+  secrets.delete('history.lost-journal');
+  await assert.rejects(openEncryptedHistory('lost-journal'), /History recovery required/);
+  assert.deepEqual(readdirSync(directory), names);
+  assert.deepEqual(readFileSync(join(directory, filename)), before);
+  assert.equal(secrets.has('history.lost-journal'), false);
+  secrets.set('history.lost-journal', journal);
+  const restored = await openEncryptedHistory('lost-journal');
+  try { assert.equal((await restored.list('chat'))[0].eventId, 'one'); }
+  finally { await restored.close(); }
+});
+
+test('wrong-key evidence excludes open and cipher failures at either connection', async () => {
+  const store = await openEncryptedHistory('wrong-key-probe');
+  await store.append([record]);
+  await store.close();
+  try {
+    for (const count of [0, 1]) {
+      failOpenAfter = count;
+      await assert.rejects(assertWrongKeyRejected('wrong-key-probe'), /database open failure/);
+      failOpenAfter = -1;
+      failCipherAfter = count;
+      await assert.rejects(assertWrongKeyRejected('wrong-key-probe'), /SQLCipher unavailable/);
+      failCipherAfter = -1;
+    }
+    await assert.rejects(assertWrongKeyRejected('wrong-key-probe'), /Wrong key was accepted/);
+    rejectWrongKey = true;
+    for (const count of [0, 1]) {
+      failCloseAfter = count;
+      await assert.rejects(assertWrongKeyRejected('wrong-key-probe'), /database close failure/);
+      failCloseAfter = -1;
+    }
+    await assertWrongKeyRejected('wrong-key-probe');
+  } finally { failOpenAfter = -1; failCipherAfter = -1; failCloseAfter = -1; rejectWrongKey = false; }
 });
 
 test.after(() => { rmSync(directory, { recursive: true, force: true }); });
