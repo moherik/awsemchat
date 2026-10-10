@@ -1,5 +1,7 @@
 # Android Olm bridge probe
 
+**Update 2026-10-11:** a separate [durable native foundation](durable-state.md) now seals account/session snapshots, pins, exact outbox bytes and receive history and has real process-death evidence. The original bridge and recorded evidence below remain the ephemeral primitive harness. Production transport/UI activation is still blocked.
+
 Experimental integration, not production protocol adoption. `apps/mobile/modules/awsemchat-crypto` is an Android local module scaffolded with official `create-expo-module@57.0.1`; Kotlin calls a Rust JNI library using pinned Apache-2.0 vodozemac 0.11.1. Its upstream audit does not audit this bridge, current dependency graph, or application protocol. Expo's scaffold license remains alongside the module; Cargo.lock records all transitive versions.
 
 ## Reproduce

@@ -5,6 +5,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 
 class AwsemchatCryptoModule : Module() {
   private var context: Long = 0
+  private var durable: DurableStore? = null
+  private external fun prepareDurableNative(snapshot: String?, input: String): String
   private val lock = Any()
   private external fun createNative(): Long
   private external fun executeNative(context: Long, input: String): String
@@ -16,6 +18,7 @@ class AwsemchatCryptoModule : Module() {
       synchronized(lock) {
         System.loadLibrary("awsemchat_crypto")
         context = createNative()
+        appContext.reactContext?.let { durable = DurableStore(it, ::prepareDurableNative) }
       }
     }
     AsyncFunction("execute") { input: String ->
@@ -24,10 +27,17 @@ class AwsemchatCryptoModule : Module() {
         else executeNative(context, input)
       }
     }
+    AsyncFunction("executeDurable") { namespace: String, input: String ->
+      synchronized(lock) { durable?.execute(namespace, input) ?: "{\"ok\":false,\"code\":\"UNAVAILABLE\"}" }
+    }
+    AsyncFunction("durableProbe") { namespace: String, action: String, input: String ->
+      synchronized(lock) { durable?.probe(namespace, action, input) ?: "{\"ok\":false,\"code\":\"UNAVAILABLE\"}" }
+    }
     OnDestroy {
       synchronized(lock) {
         destroyNative(context)
         context = 0
+        durable = null
       }
     }
   }

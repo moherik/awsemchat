@@ -75,3 +75,37 @@ pub extern "system" fn Java_expo_modules_awsemchatcrypto_AwsemchatCryptoModule_d
         engines.remove(&context);
     }
 }
+
+#[no_mangle]
+pub extern "system" fn Java_expo_modules_awsemchatcrypto_AwsemchatCryptoModule_prepareDurableNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    snapshot: JString,
+    input: JString,
+) -> jstring {
+    let result = (|| {
+        let saved = if snapshot.is_null() {
+            None
+        } else {
+            Some(
+                env.get_string(&snapshot)
+                    .map_err(|_| "STATE_INVALID")?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        };
+        let input = env
+            .get_string(&input)
+            .map_err(|_| "INVALID_INPUT")?
+            .to_string_lossy()
+            .into_owned();
+        super::durable::prepare(saved.as_deref(), &input)
+    })();
+    let response = match result {
+        Ok((state, output)) => serde_json::json!({"ok":true,"state":state,"output":output}),
+        Err(code) => serde_json::json!({"ok":false,"code":code}),
+    };
+    env.new_string(response.to_string())
+        .map(|value| value.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}

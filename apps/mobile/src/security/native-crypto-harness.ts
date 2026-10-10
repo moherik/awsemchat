@@ -1,3 +1,4 @@
+import { disposeAccounts } from './dispose-accounts';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { encryption as e, EncryptionError, type AccountHandle, type Ciphertext, type SessionHandle } from './encryption-adapter';
 
@@ -63,6 +64,6 @@ export async function runNativeCryptoHarness() {
     await rejected(() => e.encrypt(ab, 'synthetic disposed'), 'INVALID_HANDLE');
     return [...checks];
   } finally {
-    for (const account of accounts) await e.disposeAccount(account);
+    await disposeAccounts(accounts, e.disposeAccount);
   }
 }
