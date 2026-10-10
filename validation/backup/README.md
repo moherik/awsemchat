@@ -42,3 +42,9 @@ For native checks, rebuild with `npx expo prebuild --platform android --no-insta
 Native results are **pending**. iOS database backup exclusion, process-kill/power-loss windows, full-disk failure, WAL/file plaintext inspection, SecureStore deletion behavior and device replacement still require device evidence. The current foundation must not be activated for production history until those gates pass.
 
 Sources: [SDK57 SQLite](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/), [SDK57 native random bytes](https://docs.expo.dev/versions/v57.0.0/sdk/crypto/), installed `expo-secure-store` SDK57 source/API and config plugin. The version-pinned SecureStore web page was inaccessible to the research tool during this session.
+
+### Follow-up native build evidence (2026-10-10)
+
+The controller repaired official NDK 27.1 preparation and resumed local `./gradlew assembleDebug --no-daemon`. Gradle also installed the SQLite dependency's required NDK 27.0. The build ran for 23m59s and failed while downloading Hermes, fbjni and AVIF dependencies with **`No space left on device`**; available disk space was about 1.9 GiB afterward. This is a disk-capacity/dependency-acquisition failure, not a compiler error or SQLCipher failure. No APK or native SQLCipher runtime result was produced. The emulator had become authorized before this attempt; authorization alone is not runtime validation.
+
+After sufficient disk space is made available, retry from `apps/mobile/android` with `./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a` for the ARM64 emulator. The synthetic storage harness and all device acceptance assertions remain pending until the APK builds and runs. This evidence update performed no cleanup or source changes.
