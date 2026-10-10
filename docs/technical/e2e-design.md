@@ -22,7 +22,7 @@ Server-visible control data: account/device IDs and current device generation, p
 
 ## Proposed envelope version 1
 
-This is a semantic schema, not a frozen deployed wire format. Opaque IDs are stable across rename, pagination and retry. The server authorizes every transport request, including upload grants, realtime and acknowledgement.
+This is a semantic schema, not a frozen deployed wire format. Opaque IDs are stable across rename, pagination and retry. The server authorizes every transport request, including upload grants, realtime and acknowledgement. PING/PONG carries a routing authorization kind (server-visible metadata), repeated inside the protected payload. The server rejects either kind unless the conversation is private and friendship is currently accepted, including retries; the receiving client also rejects mismatched kind and any PING/PONG in a Circle. A malicious client labeling encrypted PING as ordinary content does not bypass recipient enforcement. PONG requires explicit user action and never counts as a read receipt.
 
 ```json
 {
@@ -54,9 +54,17 @@ Payload kinds include text, media, sticker, GIF, Moment, reaction, reply, deleti
 - Reactions/deletions share their target's restricted audience. Fetch pages, search, shared media, thumbnails, push, receipts and realtime enforce the same eligibility. An inaccessible event must not leak via counts/previews.
 - Current status for older Circle senders resolves a separate current authorized encrypted profile snapshot; old bubble payload is not a status archive. Nonfriend Circle status visibility remains an owner decision. Music is accepted-friends only, expires and is absent from Circle bubbles.
 
+## Media transport and revocation boundary
+
+**Proposed required transport:** the Go service proxies ciphertext downloads (including thumbnails and ranged/resumed reads) from the private Supabase bucket. Clients receive opaque proxy URLs/grant IDs, never direct Supabase signed download URLs. Every proxy request checks current session/device generation, immutable event audience, current membership eligibility and tombstone state. A cached grant never substitutes for those checks. Disable shared/CDN response caching; the proxy alone holds Storage credentials and uses server-side upstream access. It does not decrypt media.
+
+Serialize revocation and admission checks against authoritative current state; cancel active proxy streams when that state changes and recheck authorization before admitting subsequent chunks/ranges. Define the delivery boundary as bytes already admitted before revocation: those may be in flight and cannot be recalled, just as downloaded copies cannot. After the revocation commit, no new read/range/chunk admission is permitted. Implementers must demonstrate this synchronization and cancellation behavior; an ordinary one-time authorization check at stream start is insufficient for this contract.
+
+Direct signed URLs are bearer capabilities that remain usable until expiry; app token or membership revocation does not revoke an already issued Storage URL. They cannot satisfy immediate access revocation, and shortening TTL is not an equivalent. If a deployment exposes such a URL, fail this gate and remediate the transport before claiming immediate revocation. The proxy proposal and its stream semantics remain unverified until implementation/device tests.
+
 ## One active phone and restore
 
-Replacement verification serializes a new device generation and revokes prior tokens, push delivery, sockets, upload/download grants and send authority. New phone creates fresh identity/session material; contacts get an identity-change warning. Old phone never stays authorized by possessing old keys. Already downloaded history cannot be revoked cryptographically.
+Replacement verification serializes a new device generation and revokes prior tokens, push delivery, sockets, proxy upload/download grant authority and send authority at the authorization boundary above. No direct client Storage signed download URL is issued. Stale proxy grants are rejected on every new read/range/chunk admission; already admitted bytes and downloaded copies cannot be recalled. New phone creates fresh identity/session material; contacts get an identity-change warning. Old phone never stays authorized by possessing old keys. Already downloaded history cannot be revoked cryptographically.
 
 Restore first authenticates account, then separately unlocks backup using recovery material. Import only archival receive/history/media material, never old bearer tokens, active sender ratchets, pending network sends, push/OAuth secrets, invitations or current membership authority. Refresh friendship/membership/revocation state online before sending; old backup does not resurrect removed membership or identity keys. Quarantine imported messages as local history; preserve their original audience and membership interval. Review whether imported historical sender signing keys are necessary; default exclude them and retain verified source records.
 
