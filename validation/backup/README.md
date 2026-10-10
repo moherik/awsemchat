@@ -48,3 +48,16 @@ Sources: [SDK57 SQLite](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/), [SD
 The controller repaired official NDK 27.1 preparation and resumed local `./gradlew assembleDebug --no-daemon`. Gradle also installed the SQLite dependency's required NDK 27.0. The build ran for 23m59s and failed while downloading Hermes, fbjni and AVIF dependencies with **`No space left on device`**; available disk space was about 1.9 GiB afterward. This is a disk-capacity/dependency-acquisition failure, not a compiler error or SQLCipher failure. No APK or native SQLCipher runtime result was produced. The emulator had become authorized before this attempt; authorization alone is not runtime validation.
 
 After sufficient disk space is made available, retry from `apps/mobile/android` with `./gradlew assembleDebug --no-daemon -PreactNativeArchitectures=arm64-v8a` for the ARM64 emulator. The synthetic storage harness and all device acceptance assertions remain pending until the APK builds and runs. This evidence update performed no cleanup or source changes.
+
+### Explicit automatic development probe
+
+The existing synthetic probe accepts `run=1` for one automatic run per mounted route. The `__DEV__` guard blocks both automatic and manual execution in a production bundle; an in-flight guard prevents overlap, and a ref prevents StrictMode effect replay from starting a second automatic run. Manual reruns remain available. This is a validation runner, with no navigation entry added to the product UI.
+
+With the development build installed and its Metro session connected, invoke on the intended ARM64 emulator:
+
+```sh
+adb -s emulator-5554 shell am start -W -a android.intent.action.VIEW -d 'awsemchat://native-storage-probe?run=1' com.moherik.awsemchat
+adb -s emulator-5554 logcat -d -v brief ReactNativeJS:I '*:S' | rg 'AWSEM_NATIVE_STORAGE_PROBE'
+```
+
+Metro output also includes `AWSEM_NATIVE_STORAGE_PROBE` followed by JSON. Expect `status: START`, then `PASS` with the sanitized SQLCipher version and fixed check labels, or `FAIL` with a fixed `NATIVE_STORAGE_<stage>_FAILED` code. An unexpected runner/platform failure uses `NATIVE_STORAGE_RUNNER_FAILED`. Only fixed stage labels/status, a synthetic flag and a validated version string are logged; no database namespace, keys, payload, native exception message or stack is logged by this runner. `UNRECOGNIZED_VERSION` means the returned version did not match the log allowlist and requires inspection before accepting version evidence. Compare fresh START/final entries from the same invocation; historical log entries are not proof of a new run. No device success is asserted by adding the runner.
