@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+.env
+.env.*
+!.env.example
+target/
+*.jks
+*.keystore
+.DS_Store
