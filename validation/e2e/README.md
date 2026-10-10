@@ -1,6 +1,6 @@
 # E2E validation gate
 
-Date: 2026-10-10. Existing crate is a host primitive probe; **not a production encryption adapter**. Native gate BLOCKED pending binding implementation, build environment and device results.
+Date: 2026-10-10. Existing crate is a host primitive probe; **not a production encryption adapter**. Production native gate remains BLOCKED on persistent authenticated identity/ratchet state and the broader device matrix. An experimental Android binding now builds and passes a synthetic API33 ARM64 emulator probe; see [Android bridge evidence](android/README.md).
 
 ## Reproduce host evidence
 
@@ -12,7 +12,7 @@ CARGO_TARGET_DIR=/private/tmp/awsemchat-e2e-validation-target cargo test --locke
 
 Rust 1.90.0, vodozemac 0.11.1, committed Cargo.lock. Initial run: 3 passed. Expanded run adds independent private/group tamper rejection; actual output is recorded below. No dependencies/credentials downloaded or created. The group tests use Megolm solely to inspect primitives, not to select it for production.
 
-## Smallest next implementation slice: native security harness
+## Original native security harness plan (historical; current bridge evidence linked above)
 
 Keep this inside Task 1, before identity/messaging production slices. Do not modify approved product screens or demo store. The absence of a native module is achievable implementation work, not an immutable external blocker.
 
@@ -37,7 +37,7 @@ npx expo run:android --device
 
 Use Bun equivalent if a bun.lock is introduced. Set actual generated application ID explicitly before build. Record resolved package versions, Gradle/JDK/NDK, ABIs and SQLCipher version. Do not call `expo start --android` or a Hermes bundle export proof of native compilation. Scaffold local module with the supported generator rather than guessing JNI paths. Exact Gradle instrumentation task/runner will be recorded after scaffolding (none exists now).
 
-## Device acceptance matrix
+## Production device acceptance matrix (not closed by the synthetic probe)
 
 Use isolated Alice, Bob, Carol and outsider native accounts on device; a single instrumentation device can hold isolated accounts for primitive bridge proof, but transport/device-replacement acceptance later requires distinct devices. Each step emits pass/fail IDs without keys/content.
 

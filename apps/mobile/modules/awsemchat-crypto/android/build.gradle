@@ -1,0 +1,48 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.awsemchatcrypto'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.awsemchatcrypto"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+// The prototype is deliberately ARM64-only; other ABIs must be validated before adding them.
+def rustRoot = file('../rust')
+def rustOutput = layout.buildDirectory.dir('rust')
+def jniOutput = layout.buildDirectory.dir('generated/jniLibs')
+android.sourceSets.main.jniLibs.srcDir(jniOutput)
+
+tasks.register('buildRustCrypto', Exec) {
+  inputs.dir(new File(rustRoot, 'src'))
+  inputs.files(new File(rustRoot, 'Cargo.toml'), new File(rustRoot, 'Cargo.lock'), new File(rustRoot, 'rust-toolchain.toml'))
+  outputs.file(jniOutput.map { it.file('arm64-v8a/libawsemchat_crypto.so') })
+  workingDir rustRoot
+  doFirst {
+    def toolchain = new File(android.ndkDirectory, 'toolchains/llvm/prebuilt/darwin-x86_64/bin')
+    if (!toolchain.exists()) throw new GradleException('This prototype build requires the macOS Android NDK toolchain')
+    environment 'CARGO_TARGET_DIR', rustOutput.get().asFile.absolutePath
+    environment 'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER', new File(toolchain, 'aarch64-linux-android24-clang').absolutePath
+    environment 'CC_aarch64_linux_android', new File(toolchain, 'aarch64-linux-android24-clang').absolutePath
+    environment 'AR_aarch64_linux_android', new File(toolchain, 'llvm-ar').absolutePath
+    environment 'CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS', '-C link-arg=-Wl,-z,max-page-size=16384'
+  }
+  commandLine 'cargo', 'build', '--locked', '--release', '--target', 'aarch64-linux-android'
+  doLast {
+    copy {
+      from rustOutput.map { it.file('aarch64-linux-android/release/libawsemchat_crypto.so') }
+      into jniOutput.map { it.dir('arm64-v8a') }
+    }
+  }
+}
+tasks.named('preBuild').configure { dependsOn 'buildRustCrypto' }
