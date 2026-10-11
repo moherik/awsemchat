@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"awsemchat/services/api/internal/auth"
@@ -51,6 +53,45 @@ type principalKey struct{}
 
 func NewHandler(service *Service) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/circles", func(w http.ResponseWriter, r *http.Request) {
+		cursor, limit, err := paging(r)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		page, err := service.List(r.Context(), r.Context().Value(principalKey{}).(auth.Principal), cursor, limit)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, page)
+	})
+	mux.HandleFunc("GET /v1/circles/invitations", func(w http.ResponseWriter, r *http.Request) {
+		cursor, limit, err := paging(r)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		page, err := service.Invitations(r.Context(), r.Context().Value(principalKey{}).(auth.Principal), cursor, limit)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, page)
+	})
+	mux.HandleFunc("GET /v1/circles/{circleID}", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			failure(w, ErrInvalid)
+			return
+		}
+		d, err := service.Details(r.Context(), r.Context().Value(principalKey{}).(auth.Principal), r.PathValue("circleID"))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, d)
+	})
+
 	mux.HandleFunc("POST /v1/circles", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			OperationID string `json:"operationId"`
@@ -151,4 +192,24 @@ func NewHandler(service *Service) http.Handler {
 		}
 		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, actor)))
 	})
+}
+
+func paging(r *http.Request) (string, int, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return "", 0, ErrInvalid
+	}
+	for key, values := range query {
+		if (key != "cursor" && key != "limit") || len(values) != 1 {
+			return "", 0, ErrInvalid
+		}
+	}
+	limit := 25
+	if value, present := query["limit"]; present {
+		limit, err = strconv.Atoi(value[0])
+		if err != nil {
+			return "", 0, ErrInvalid
+		}
+	}
+	return query.Get("cursor"), limit, nil
 }

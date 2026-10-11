@@ -111,3 +111,49 @@ func TestCircleHTTPHandoffAllowsAdminToLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCircleHTTPReadsValidatePagingAndCurrentMembership(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	bob := addActor(t, pool, "bob", true)
+	c, err := s.Create(ctx, a, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Invite(ctx, a, c.ID, bob.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(s)
+	call := func(actor, path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Authorization", "Bearer "+tokenFor(actor))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	for _, tc := range []struct{ actor, path, contains string }{{"alice", "/v1/circles?limit=1", `"memberCount":1`}, {"alice", "/v1/circles/" + c.ID, `"role":"admin"`}, {"bob", "/v1/circles/invitations?limit=1", `"status":"pending"`}, {"bob", "/v1/circles", `"items":[]`}} {
+		w := call(tc.actor, tc.path)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), tc.contains) || w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("read %s=%d %s", tc.path, w.Code, w.Body.String())
+		}
+		for _, secret := range []string{`"phone"`, `"description"`, `"name"`, `"token"`} {
+			if strings.Contains(w.Body.String(), secret) {
+				t.Errorf("private field leaked: %s", secret)
+			}
+		}
+	}
+	if w := call("bob", "/v1/circles/"+c.ID); w.Code != 403 {
+		t.Fatalf("outsider detail=%d", w.Code)
+	}
+	for _, path := range []string{"/v1/circles?limit=1&limit=2", "/v1/circles?limit=101", "/v1/circles?cursor=bad%20cursor", "/v1/circles?actor=bob", "/v1/circles/invitations?limit=x", "/v1/circles/" + c.ID + "?cursor=x"} {
+		if w := call("alice", path); w.Code != 400 {
+			t.Errorf("malformed %s=%d", path, w.Code)
+		}
+	}
+	if _, err := pool.Exec(ctx, "UPDATE auth_sessions SET revoked_at=now() WHERE account_id='bob'"); err != nil {
+		t.Fatal(err)
+	}
+	if w := call("bob", "/v1/circles/invitations"); w.Code != 401 {
+		t.Fatalf("revoked inbox=%d", w.Code)
+	}
+}
