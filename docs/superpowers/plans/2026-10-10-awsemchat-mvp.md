@@ -8,7 +8,7 @@
 
 **Tech Stack:** Expo, React Native, TypeScript, Go, SQLite, PostgreSQL, Supabase Storage; cryptographic library and provider dependencies selected through Task 1 evidence.
 
-**Spec:** `docs/superpowers/specs/2026-10-10-awsemchat-mvp-design.md` (user approved 2026-10-10). Presentation and Android music direction are superseded by `docs/technical/ui-backend-handoff.md`; privacy rules remain binding. Task1 status: BLOCKED for native security validation; see `validation/e2e/README.md` for durable evidence and the next harness slice.
+**Spec:** `docs/superpowers/specs/2026-10-10-awsemchat-mvp-design.md` (user approved 2026-10-10). Presentation and Android music direction are superseded by `docs/technical/ui-backend-handoff.md`; privacy rules remain binding. Task1 status: partial; native crypto/storage/backup probes have passed, while authenticated key distribution and complete application security/provider gates remain unfinished. See `docs/technical/project-status.md` for the current task-by-task status. Composite checklist items stay unchecked until every required clause is verified.
 
 ## Global Constraints
 
@@ -35,7 +35,7 @@
 
 ## Execution structure and file ownership
 
-The approved UI demo is committed in Git (baseline `89fac6d`). Use the managed production-foundation worktree and commit narrowly scoped changes; never introduce credentials or replace the approved UI. Use `apps/mobile` for the Expo application and `services/api` for Go. Keep product features together inside each platform, with domain/use-case, persistence, and transport boundaries within each backend feature. `docs/technical` owns reviewed provider and security decisions.
+The approved UI demo is committed in Git (baseline `89fac6d`). The owner directed work back to `/Users/erik/Developer/projects/awsemchat` on2026-10-12. Production commits were fast-forwarded into `codex/awsemchat-mvp`; this original checkout is now canonical. Commit narrowly scoped changes; never introduce credentials or redesign the approved UI. Use `apps/mobile` for the Expo application and `services/api` for Go. Keep product features together inside each platform, with domain/use-case, persistence, and transport boundaries within each backend feature. `docs/technical` owns reviewed provider and security decisions.
 
 This document sequences the whole MVP. Task 1 produces the concrete security/provider contracts required to expand later slices into executable steps. Later task interfaces below are proposed application interfaces, not claims that a particular library supports them. Do not invent library calls or silently substitute fake encryption. Expand each dependent slice into a short subsystem plan using the validated contracts before implementing it.
 
@@ -55,7 +55,7 @@ This document sequences the whole MVP. Task 1 produces the concrete security/pro
 
 ## Task 2: Identity and mobile foundation
 
-Progress (2026-10-11): Go authentication core, explicit migration command, local API command, startup/readiness checks and graceful shutdown pass real PostgreSQL17 integration and race tests. Owner chose mock SMS first; the mock requires explicit development mode and loopback binding. Contact PIN is fixed. Mobile login/session integration and device validation remain pending; this task is not complete. See `docs/technical/identity-service.md` and `services/api/README.md`.
+Progress (2026-10-11): Go authentication core, explicit migration command, local API command, startup/readiness checks and graceful shutdown pass real PostgreSQL17 integration and race tests. Owner chose mock SMS first; the mock requires explicit development mode and loopback binding. Contact PIN is fixed. Native login/session integration, secure persistence and account-bound encryption/controller probes now pass, with rendered Android login screens. Application-wide integration, foreground replacement revalidation, lifecycle retirement and complete device acceptance remain unfinished; this task is not complete. See `docs/technical/identity-service.md` and `services/api/README.md`.
 
 **Files:** `apps/mobile/app.config.ts`, `apps/mobile/src/app/`, `apps/mobile/src/features/auth/`, `apps/mobile/src/storage/`, `services/api/cmd/api/main.go`, `services/api/internal/auth/`, `services/api/migrations/001_identity.sql`.
 
@@ -172,4 +172,4 @@ The UI handoff records the owner's choice to explore Android music sessions; thi
 
 Spec coverage: Tasks 2-3 cover identity/membership; 4-5 messaging/media; 6 recovery; 7 Moments; 8 expression; 9 status/PING/safety; 10 music; 11 navigation/UI and device acceptance. Task 1 owns technical unknowns and resolves interfaces before dependent production work.
 
-This is the roadmap and first validation task, not fabricated certainty about unselected SDKs, libraries, or providers. Concrete subsystem plans follow demonstrated integration contracts. Review this plan before execution; choose native implementation in this session or subagent-driven implementation with task-level independent reviews.
+This is the roadmap and first validation task, not fabricated certainty about unselected SDKs, libraries, or providers. Concrete subsystem plans follow demonstrated integration contracts. Continue inline test-driven development as directed by the owner; subagent-driven development is disabled.

@@ -1,6 +1,6 @@
 # Provider feasibility
 
-Checked 2026-10-10. These are documentation findings, not account-level integration tests.
+Checked 2026-10-10. These are dated documentation findings, not account-level integration tests. Historical runtime-status statements below are superseded by later native evidence and the [current project status](project-status.md): SQLCipher/native crypto/archive probes now pass; complete provider integration remains unfinished.
 
 ## Spotify
 
