@@ -309,3 +309,34 @@ func (s *Service) SignOut(ctx context.Context, token string) error {
 	}
 	return nil
 }
+
+func (s *Service) LockSession(ctx context.Context, tx pgx.Tx, principal Principal) error {
+	if tx == nil || principal.AccountID == "" || principal.SessionID == "" || principal.Generation < 1 {
+		return ErrSessionRevoked
+	}
+	var generation int64
+	err := tx.QueryRow(ctx, "SELECT generation FROM auth_accounts WHERE id=$1 FOR SHARE", principal.AccountID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionRevoked
+	}
+	if err != nil {
+		return ErrUnavailable
+	}
+	if generation != principal.Generation {
+		return ErrSessionRevoked
+	}
+	var device string
+	var sessionGeneration int64
+	var expiry time.Time
+	err = tx.QueryRow(ctx, `SELECT device_id,generation,expires_at FROM auth_sessions WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL FOR SHARE`, principal.SessionID, principal.AccountID).Scan(&device, &sessionGeneration, &expiry)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionRevoked
+	}
+	if err != nil {
+		return ErrUnavailable
+	}
+	if device != principal.DeviceID || sessionGeneration != generation || !expiry.After(s.now()) {
+		return ErrSessionRevoked
+	}
+	return nil
+}

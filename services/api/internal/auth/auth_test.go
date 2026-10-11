@@ -388,3 +388,105 @@ func TestLogoutRevokesCurrentSession(t *testing.T) {
 		t.Errorf("Repeated SignOut=%v,want idempotent success", err)
 	}
 }
+
+func TestTransactionAuthorizationRejectsStaleOrChangedPrincipal(t *testing.T) {
+	service, sms, pool, _ := fixture(t)
+	ctx := context.Background()
+	challenge, err := service.Start(ctx, StartInput{Phone: "+6281234567890", DeviceID: "phone-one", OperationID: "operation-one", Network: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := service.Verify(ctx, VerifyInput{ChallengeID: challenge.ID, Code: sms.code, DeviceID: "phone-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := service.RequireSession(ctx, session.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.LockSession(ctx, tx, principal); err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("current transaction authorization: %v", err)
+	}
+	tx.Rollback(ctx)
+	changed := principal
+	changed.DeviceID = "another-phone"
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.LockSession(ctx, tx, changed); !errors.Is(err, ErrSessionRevoked) {
+		t.Errorf("changed principal accepted: %v", err)
+	}
+	tx.Rollback(ctx)
+	if err := service.SignOut(ctx, session.Token); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := service.LockSession(ctx, tx, principal); !errors.Is(err, ErrSessionRevoked) {
+		t.Errorf("revoked transaction principal accepted: %v", err)
+	}
+}
+
+func TestAuthorizedMutationHoldsSessionUntilItsTransactionFinishes(t *testing.T) {
+	service, sms, pool, _ := fixture(t)
+	ctx := context.Background()
+	challenge, err := service.Start(ctx, StartInput{Phone: "+6281234567890", DeviceID: "phone-one", OperationID: "operation-one", Network: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := service.Verify(ctx, VerifyInput{ChallengeID: challenge.ID, Code: sms.code, DeviceID: "phone-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := service.RequireSession(ctx, session.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := service.LockSession(ctx, tx, principal); err != nil {
+		t.Fatal(err)
+	}
+	revoke, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revoke.Rollback(ctx)
+	if _, err := revoke.Exec(ctx, "SET LOCAL lock_timeout='50ms'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revoke.Exec(ctx, "UPDATE auth_sessions SET revoked_at=now() WHERE id=$1", principal.SessionID); err == nil {
+		t.Fatal("session revocation raced past authorized transaction")
+	}
+	revoke.Rollback(ctx)
+	replacement, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Rollback(ctx)
+	if _, err := replacement.Exec(ctx, "SET LOCAL lock_timeout='50ms'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replacement.Exec(ctx, "UPDATE auth_accounts SET generation=generation+1 WHERE id=$1", principal.AccountID); err == nil {
+		t.Fatal("replacement generation raced past authorized transaction")
+	}
+	replacement.Rollback(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SignOut(ctx, session.Token); err != nil {
+		t.Fatalf("revocation after commit: %v", err)
+	}
+}
