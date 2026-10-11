@@ -106,6 +106,13 @@ func TestServerRequiresExplicitMigrationAndServesAuthentication(t *testing.T) {
 	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"items":[]`) {
 		t.Fatalf("mounted social list=%d %s", listed.Code, listed.Body.String())
 	}
+	circleRequest := httptest.NewRequest(http.MethodPost, "/v1/circles", strings.NewReader(`{"operationId":"create-circle-1"}`))
+	circleRequest.Header.Set("Authorization", "Bearer "+signed.Token)
+	circleResult := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(circleResult, circleRequest)
+	if circleResult.Code != 200 || !strings.Contains(circleResult.Body.String(), `"memberCount":1`) {
+		t.Fatalf("mounted Circle create=%d %s", circleResult.Code, circleResult.Body.String())
+	}
 	if _, err := pool.Exec(ctx, "DROP TABLE auth_sessions"); err != nil {
 		t.Fatal(err)
 	}

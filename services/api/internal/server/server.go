@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"awsemchat/services/api/internal/auth"
+	"awsemchat/services/api/internal/circles"
 	"awsemchat/services/api/internal/config"
 	"awsemchat/services/api/internal/friends"
 	"awsemchat/services/api/migrations"
@@ -31,6 +32,9 @@ func New(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) (*http.Serv
 	social := friends.NewHandler(friends.NewService(pool, service))
 	mux.Handle("/v1/friends", social)
 	mux.Handle("/v1/friends/", social)
+	circleHandler := circles.NewHandler(circles.NewService(pool, service))
+	mux.Handle("/v1/circles", circleHandler)
+	mux.Handle("/v1/circles/", circleHandler)
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()

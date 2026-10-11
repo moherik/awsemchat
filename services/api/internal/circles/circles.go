@@ -18,10 +18,10 @@ var ErrInvalid = errors.New("invalid circle input")
 var ErrAdminHandoff = errors.New("circle admin handoff required")
 
 type Circle struct {
-	ID          string
-	Epoch       int64
-	MemberCount int
-	Closed      bool
+	ID          string `json:"id"`
+	Epoch       int64  `json:"epoch"`
+	MemberCount int    `json:"memberCount"`
+	Closed      bool   `json:"closed"`
 }
 type Service struct {
 	pool *pgxpool.Pool
@@ -116,6 +116,9 @@ func (s *Service) Leave(ctx context.Context, actor auth.Principal, id string) er
 			return auth.ErrUnavailable
 		}
 	}
+	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", id, actor.AccountID); err != nil {
+		return auth.ErrUnavailable
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return auth.ErrUnavailable
 	}
@@ -168,13 +171,23 @@ func (s *Service) Handoff(ctx context.Context, actor auth.Principal, circleID, s
 	if _, err := tx.Exec(ctx, "UPDATE circle_memberships SET role='member' WHERE id=$1", actorInterval); err != nil {
 		return auth.ErrUnavailable
 	}
+	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", circleID, actor.AccountID); err != nil {
+		return auth.ErrUnavailable
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return auth.ErrUnavailable
 	}
 	return nil
 }
 
-type Invitation struct{ ID, CircleID, InviterID, InviteeID, Status, IntervalID string }
+type Invitation struct {
+	ID         string `json:"id"`
+	CircleID   string `json:"circleId"`
+	InviterID  string `json:"inviterId"`
+	InviteeID  string `json:"inviteeId"`
+	Status     string `json:"status"`
+	IntervalID string `json:"intervalId,omitempty"`
+}
 
 func (s *Service) Invite(ctx context.Context, actor auth.Principal, circleID, inviteeID string) (Invitation, error) {
 	if !idPattern.MatchString(circleID) || !idPattern.MatchString(inviteeID) {
@@ -337,4 +350,62 @@ func (s *Service) Respond(ctx context.Context, actor auth.Principal, invitationI
 		return Invitation{}, auth.ErrUnavailable
 	}
 	return i, nil
+}
+
+func (s *Service) Remove(ctx context.Context, actor auth.Principal, circleID, targetID string) error {
+	if !idPattern.MatchString(circleID) || !idPattern.MatchString(targetID) {
+		return ErrInvalid
+	}
+	if targetID == actor.AccountID {
+		return ErrDenied
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auth.ErrUnavailable
+	}
+	defer tx.Rollback(ctx)
+	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+		return err
+	}
+	var epoch int64
+	var closed bool
+	err = tx.QueryRow(ctx, "SELECT epoch,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&epoch, &closed)
+	if errors.Is(err, pgx.ErrNoRows) || closed {
+		return ErrDenied
+	}
+	if err != nil {
+		return auth.ErrUnavailable
+	}
+	var admin bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM circle_memberships WHERE circle_id=$1 AND account_id=$2 AND role='admin' AND left_epoch IS NULL)", circleID, actor.AccountID).Scan(&admin); err != nil {
+		return auth.ErrUnavailable
+	}
+	if !admin {
+		return ErrDenied
+	}
+	var interval string
+	err = tx.QueryRow(ctx, "SELECT id FROM circle_memberships WHERE circle_id=$1 AND account_id=$2 AND left_epoch IS NULL", circleID, targetID).Scan(&interval)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrDenied
+	}
+	if err != nil {
+		return auth.ErrUnavailable
+	}
+	if epoch >= 9007199254740991 {
+		return ErrDenied
+	}
+	epoch++
+	if _, err := tx.Exec(ctx, "UPDATE circle_memberships SET left_epoch=$1,left_at=now() WHERE id=$2", epoch, interval); err != nil {
+		return auth.ErrUnavailable
+	}
+	if _, err := tx.Exec(ctx, "UPDATE circles SET epoch=$1,member_count=member_count-1 WHERE id=$2", epoch, circleID); err != nil {
+		return auth.ErrUnavailable
+	}
+	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", circleID, targetID); err != nil {
+		return auth.ErrUnavailable
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return auth.ErrUnavailable
+	}
+	return nil
 }

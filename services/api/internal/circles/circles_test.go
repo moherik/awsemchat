@@ -59,7 +59,7 @@ func fixture(t *testing.T) (*Service, *pgxpool.Pool, auth.Principal) {
 	if _, err := pool.Exec(ctx, "INSERT INTO auth_accounts(id,phone_digest,pin,generation) VALUES('alice',$1,'ABCDEFGH',1)", digest[:]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "INSERT INTO auth_sessions(id,account_id,device_id,generation,token_digest,created_at,expires_at) VALUES('session-alice','alice','device-alice',1,$1,now(),$2)", digest[:], expiry); err != nil {
+	if _, err := pool.Exec(ctx, "INSERT INTO auth_sessions(id,account_id,device_id,generation,token_digest,created_at,expires_at) VALUES('session-alice','alice','device-alice',1,$1,now(),$2)", sessionDigest("alice"), expiry); err != nil {
 		t.Fatal(err)
 	}
 	return NewService(pool, identity), pool, auth.Principal{SessionID: "session-alice", AccountID: "alice", DeviceID: "device-alice", Generation: 1, ExpiresAt: expiry}
@@ -232,7 +232,7 @@ func addActor(t *testing.T, pool *pgxpool.Pool, id string, accepted bool) auth.P
 	if _, err := pool.Exec(ctx, "INSERT INTO auth_accounts(id,phone_digest,pin,generation) VALUES($1,$2,$3,1)", id, digest[:], string(pin)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "INSERT INTO auth_sessions(id,account_id,device_id,generation,token_digest,created_at,expires_at) VALUES($1,$2,$3,1,$4,now(),$5)", "session-"+id, id, "device-"+id, digest[:], expiry); err != nil {
+	if _, err := pool.Exec(ctx, "INSERT INTO auth_sessions(id,account_id,device_id,generation,token_digest,created_at,expires_at) VALUES($1,$2,$3,1,$4,now(),$5)", "session-"+id, id, "device-"+id, sessionDigest(id), expiry); err != nil {
 		t.Fatal(err)
 	}
 	if accepted {
@@ -387,5 +387,95 @@ func TestBlockedAndExpiredInvitesCannotJoin(t *testing.T) {
 	var count int
 	if err := pool.QueryRow(ctx, "SELECT member_count FROM circles WHERE id=$1", c.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("denied join count=%d err=%v", count, err)
+	}
+}
+
+func TestAdminRemovalEndsIntervalAndRequiresNewInvitationToRejoin(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	bob := addActor(t, pool, "bob", true)
+	carol := addActor(t, pool, "carol", true)
+	c, err := s.Create(ctx, a, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := s.Respond(ctx, bob, invite.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Remove(ctx, carol, c.ID, bob.AccountID); !errors.Is(err, ErrDenied) {
+		t.Fatalf("outsider removal=%v", err)
+	}
+	if err := s.Remove(ctx, bob, c.ID, a.AccountID); !errors.Is(err, ErrDenied) {
+		t.Fatalf("member removed admin=%v", err)
+	}
+	if err := s.Remove(ctx, a, c.ID, a.AccountID); !errors.Is(err, ErrDenied) {
+		t.Fatalf("self removal bypassed leave=%v", err)
+	}
+	if err := s.Remove(ctx, a, c.ID, bob.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	var left int64
+	if err := pool.QueryRow(ctx, "SELECT member_count,(SELECT left_epoch FROM circle_memberships WHERE id=$2) FROM circles WHERE id=$1", c.ID, joined.IntervalID).Scan(&count, &left); err != nil || count != 1 || left != 3 {
+		t.Fatalf("removed count=%d left=%d err=%v", count, left, err)
+	}
+	if _, err := s.Respond(ctx, bob, invite.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("removed member replay=%v", err)
+	}
+	fresh, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejoined, err := s.Respond(ctx, bob, fresh.ID, true)
+	if err != nil || rejoined.IntervalID == joined.IntervalID {
+		t.Fatalf("removed rejoin=%+v err=%v", rejoined, err)
+	}
+}
+
+func TestLosingAdminAuthorityRevokesIssuedPendingInvitations(t *testing.T) {
+	for _, action := range []string{"leave", "remove", "handoff"} {
+		t.Run(action, func(t *testing.T) {
+			s, pool, a := fixture(t)
+			ctx := context.Background()
+			bob := addActor(t, pool, "bob", true)
+			carol := addActor(t, pool, "carol", true)
+			c, err := s.Create(ctx, a, "create-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, "INSERT INTO circle_memberships(id,circle_id,account_id,role,joined_epoch) VALUES('bob-admin',$1,'bob','admin',2)", c.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, "UPDATE circles SET epoch=2,member_count=2 WHERE id=$1", c.ID); err != nil {
+				t.Fatal(err)
+			}
+			invite, err := s.Invite(ctx, a, c.ID, carol.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch action {
+			case "leave":
+				err = s.Leave(ctx, a, c.ID)
+			case "remove":
+				err = s.Remove(ctx, bob, c.ID, a.AccountID)
+			case "handoff":
+				err = s.Handoff(ctx, a, c.ID, bob.AccountID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var status string
+			if err := pool.QueryRow(ctx, "SELECT status FROM circle_invites WHERE id=$1", invite.ID).Scan(&status); err != nil || status != "revoked" {
+				t.Fatalf("issued invitation=%s err=%v", status, err)
+			}
+			if _, err := s.Respond(ctx, carol, invite.ID, true); !errors.Is(err, ErrDenied) {
+				t.Fatalf("former-admin invitation accepted=%v", err)
+			}
+		})
 	}
 }
