@@ -20,10 +20,13 @@ var identitySQL string
 //go:embed 002_social.sql
 var socialSQL string
 
+//go:embed 003_circles.sql
+var circlesSQL string
+
 var scripts = []struct {
 	version int
 	sql     string
-}{{1, identitySQL}, {2, socialSQL}}
+}{{1, identitySQL}, {2, socialSQL}, {3, circlesSQL}}
 
 func checksum(sql string) string {
 	sum := sha256.Sum256([]byte(sql))
@@ -72,7 +75,7 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) error {
 			return ErrSchema
 		}
 	}
-	for _, table := range []string{"auth_accounts", "auth_challenges", "auth_sessions", "friend_links", "friend_blocks"} {
+	for _, table := range []string{"auth_accounts", "auth_challenges", "auth_sessions", "friend_links", "friend_blocks", "circles", "circle_memberships", "circle_invites"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil || !exists {
 			return ErrSchema
