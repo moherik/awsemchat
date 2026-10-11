@@ -5,7 +5,7 @@ import {createSocialAPI,SocialError} from '../src/features/social/api.ts';
 const session={accessToken:'A'.repeat(43),account:{id:'alice',pin:'ABCDEFGH'},deviceId:'device-alice',generation:1,expiresAt:'2099-01-01T00:00:00Z'};
 const circle={id:'circle-one',epoch:2,memberCount:2,closed:false};
 const summary={...circle,intervalId:'interval-alice',role:'admin',joinedEpoch:1};
-async function fixture(t,respond,getSession=()=>session){const requests=[];const server=createServer(async(req,res)=>{requests.push({path:req.url,authorization:req.headers.authorization});await respond(req,res);});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}));return {api:createSocialAPI(`http://127.0.0.1:${server.address().port}`,getSession,true),requests};}
+async function fixture(t,respond,getSession=()=>session){const requests=[];const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;requests.push({path:req.url,method:req.method,body:body?JSON.parse(body):null,authorization:req.headers.authorization});await respond(req,res);});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}));return {api:createSocialAPI(`http://127.0.0.1:${server.address().port}`,getSession,true),requests};}
 function json(res,value,status=200){res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));}
 test('Circle client validates paginated metadata and sends current session',async t=>{
  const {api,requests}=await fixture(t,(req,res)=>json(res,{items:[{...summary,phone:'private'}],nextCursor:'circle-one'}));
@@ -27,4 +27,26 @@ test('Circle client discards a response after account session changes',async t=>
 });
 test('Circle client preserves only safe backend error codes',async t=>{
  const {api}=await fixture(t,(_,res)=>json(res,{code:'SESSION_REVOKED',message:'private'},401));await assert.rejects(api.circles(),e=>e.code==='SESSION_REVOKED'&&!e.message.includes('private'));
+});
+
+test('friend client validates paginated contacts and exact request consent/block bodies',async t=>{
+ const contact={accountId:'bob',pin:'BCDEFGHJ',requestId:'request-one',status:'accepted'};
+ const request={id:'request-one',requestedBy:'alice',targetId:'bob',status:'pending'};
+ const {api,requests}=await fixture(t,(req,res)=>{if(req.method==='GET')json(res,{items:[{...contact,phone:'private'}],nextCursor:'bob'});else if(req.url==='/v1/friends/requests')json(res,request);else{res.writeHead(204);res.end();}});
+ assert.deepEqual(await api.friends('accepted','previous',1),{items:[contact],nextCursor:'bob'});assert.deepEqual(await api.requestFriend('BCDEFGHJ'),request);
+ await api.respondFriend('request-one',false);await api.blockAccount('bob',false);
+ assert.deepEqual(requests.map(r=>[r.method,r.path,r.body]),[['GET','/v1/friends?cursor=previous&limit=1&kind=accepted',null],['POST','/v1/friends/requests',{pin:'BCDEFGHJ'}],['POST','/v1/friends/requests/request-one/response',{accept:false}],['PUT','/v1/friends/blocks/bob',{blocked:false}]]);
+});
+test('Circle mutations send only routing IDs and parse acceptance intervals',async t=>{
+ const invite={id:'invite-one',circleId:'circle-one',inviterId:'alice',inviteeId:'bob',status:'pending'};
+ const {api,requests}=await fixture(t,(req,res)=>{if(req.url==='/v1/circles')json(res,circle);else if(req.url.endsWith('/invitations'))json(res,invite);else if(req.url.endsWith('/response'))json(res,{...invite,status:'accepted',intervalId:'interval-bob'});else{res.writeHead(204);res.end();}});
+ assert.deepEqual(await api.createCircle('create-one'),circle);assert.deepEqual(await api.invite('circle-one','bob'),invite);
+ assert.deepEqual(await api.respondInvitation('invite-one',true),{...invite,status:'accepted',intervalId:'interval-bob'});
+ await api.handoff('circle-one','bob');await api.removeMember('circle-one','bob');await api.leave('circle-one');
+ assert.deepEqual(requests.map(r=>[r.method,r.path,r.body]),[['POST','/v1/circles',{operationId:'create-one'}],['POST','/v1/circles/circle-one/invitations',{accountId:'bob'}],['POST','/v1/circles/invitations/invite-one/response',{accept:true}],['POST','/v1/circles/circle-one/handoff',{accountId:'bob'}],['POST','/v1/circles/circle-one/members/bob/remove',{}],['POST','/v1/circles/circle-one/leave',{}]]);
+});
+test('mutations preserve failed requests and reject malformed successful acknowledgements',async t=>{
+ let fail=true;const {api,requests}=await fixture(t,(_,res)=>{if(fail){fail=false;json(res,{code:'UNAVAILABLE'},503);}else json(res,circle);});
+ await assert.rejects(api.createCircle('same-operation'),e=>e.code==='UNAVAILABLE');assert.deepEqual(await api.createCircle('same-operation'),circle);assert.deepEqual(requests.map(r=>r.body),[{operationId:'same-operation'},{operationId:'same-operation'}]);
+ await assert.rejects(api.leave('circle-one'),e=>e.code==='INVALID_RESPONSE');
 });

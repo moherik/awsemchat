@@ -42,12 +42,12 @@ function invitation(value: unknown): Invitation {
   if (!id(v.id) || !id(v.circleId) || !id(v.inviterId) || !id(v.inviteeId) || v.inviterId === v.inviteeId || v.status !== 'pending') throw new SocialError('INVALID_RESPONSE');
   return { id: v.id, circleId: v.circleId, inviterId: v.inviterId, inviteeId: v.inviteeId, status: 'pending' };
 }
-function page<T extends { id: string }>(value: unknown, parse: (v: unknown) => T, limit: number): Page<T> {
+function page<T>(value: unknown, parse: (v: unknown) => T, limit: number, key: (item:T)=>string): Page<T> {
   const v = object(value);
   if (!Array.isArray(v.items) || v.items.length > limit) throw new SocialError('INVALID_RESPONSE');
   const items = v.items.map(parse);
-  if (new Set(items.map(i => i.id)).size !== items.length) throw new SocialError('INVALID_RESPONSE');
-  if (v.nextCursor !== undefined && (!id(v.nextCursor) || items.length !== limit || v.nextCursor !== items.at(-1)?.id)) throw new SocialError('INVALID_RESPONSE');
+  if (new Set(items.map(key)).size !== items.length) throw new SocialError('INVALID_RESPONSE');
+  if (v.nextCursor !== undefined && (!id(v.nextCursor) || items.length !== limit || v.nextCursor !== (items.length ? key(items[items.length-1]) : undefined))) throw new SocialError('INVALID_RESPONSE');
   return { items, ...(v.nextCursor !== undefined ? { nextCursor: v.nextCursor } : {}) };
 }
 const codes = new Set(['INVALID_INPUT', 'SESSION_REVOKED', 'DENIED', 'CIRCLE_FULL', 'ADMIN_HANDOFF_REQUIRED', 'UNAVAILABLE', 'RATE_LIMITED']);
@@ -56,15 +56,16 @@ export function createSocialAPI(baseURL: string, session: () => Session, develop
   try { url = new URL(baseURL); } catch { throw new SocialError('CONFIGURATION'); }
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/' || (url.protocol !== 'https:' && !(development && local && url.protocol === 'http:'))) throw new SocialError('CONFIGURATION');
-  async function request(path: string): Promise<unknown> {
+  async function request(path: string, method = 'GET', body?: unknown, empty = false): Promise<unknown> {
     const current = session();
     const binding = [current.accessToken, current.account.id, current.deviceId, current.generation];
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await fetch(`${url.origin}${path}`, { headers: { Accept: 'application/json', Authorization: `Bearer ${current.accessToken}` }, redirect: 'error', signal: controller.signal });
+      const response = await fetch(`${url.origin}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type':'application/json' }), Authorization: `Bearer ${current.accessToken}` }, redirect: 'error', signal: controller.signal });
       const text = await response.text();
       const after = session();
       if ([after.accessToken, after.account.id, after.deviceId, after.generation].some((v, i) => v !== binding[i])) throw new SocialError('SESSION_CHANGED');
+      if (response.ok && empty) { if (response.status !== 204 || text !== '') throw new SocialError('INVALID_RESPONSE'); return undefined; }
       if (text.length > 131072) throw new SocialError('INVALID_RESPONSE');
       let value: unknown;
       try { value = JSON.parse(text); } catch { throw new SocialError(response.ok ? 'INVALID_RESPONSE' : 'UNAVAILABLE'); }
@@ -81,8 +82,55 @@ export function createSocialAPI(baseURL: string, session: () => Session, develop
     return `?cursor=${encodeURIComponent(cursor)}&limit=${limit}`;
   }
   return {
-    async circles(cursor = '', limit = 25): Promise<Page<Summary>> { return page(await request(`/v1/circles${query(cursor, limit)}`), summary, limit); },
+    async friends(kind: FriendKind = 'accepted', cursor = '', limit = 25): Promise<Page<Contact>> {
+      if (!['accepted','incoming','outgoing','blocked'].includes(kind)) throw new SocialError('INVALID_INPUT');
+      return page(await request(`/v1/friends${query(cursor,limit)}&kind=${kind}`), value => contact(value,kind),limit, item => item.accountId);
+    },
+    async requestFriend(pin: string): Promise<FriendRequest> { if (!pinValid(pin)) throw new SocialError('INVALID_INPUT'); return friendRequest(await request('/v1/friends/requests','POST',{pin})); },
+    async respondFriend(requestId: string, accept: boolean): Promise<void> { requireIDs(requestId); requireBoolean(accept); await request(`/v1/friends/requests/${encodeURIComponent(requestId)}/response`,'POST',{accept},true); },
+    async blockAccount(accountId: string, blocked: boolean): Promise<void> { requireIDs(accountId); requireBoolean(blocked); await request(`/v1/friends/blocks/${encodeURIComponent(accountId)}`,'PUT',{blocked},true); },
+    async createCircle(operationId: string): Promise<CircleRecord> { requireIDs(operationId); return circleRecord(await request('/v1/circles','POST',{operationId})); },
+    async invite(circleId: string, accountId: string): Promise<Invitation> {
+      requireIDs(circleId,accountId); const result = invitation(await request(`/v1/circles/${encodeURIComponent(circleId)}/invitations`,'POST',{accountId}));
+      if (result.circleId !== circleId || result.inviteeId !== accountId) throw new SocialError('INVALID_RESPONSE'); return result;
+    },
+    async respondInvitation(invitationId: string, accept: boolean): Promise<InvitationResponse> {
+      requireIDs(invitationId); requireBoolean(accept); const result = invitationResponse(await request(`/v1/circles/invitations/${encodeURIComponent(invitationId)}/response`,'POST',{accept}));
+      if (result.id !== invitationId || result.status !== (accept ? 'accepted':'declined')) throw new SocialError('INVALID_RESPONSE'); return result;
+    },
+    async handoff(circleId: string, accountId: string): Promise<void> { requireIDs(circleId,accountId); await request(`/v1/circles/${encodeURIComponent(circleId)}/handoff`,'POST',{accountId},true); },
+    async leave(circleId: string): Promise<void> { requireIDs(circleId); await request(`/v1/circles/${encodeURIComponent(circleId)}/leave`,'POST',{},true); },
+    async removeMember(circleId: string, accountId: string): Promise<void> { requireIDs(circleId,accountId); await request(`/v1/circles/${encodeURIComponent(circleId)}/members/${encodeURIComponent(accountId)}/remove`,'POST',{},true); },
+    async circles(cursor = '', limit = 25): Promise<Page<Summary>> { return page(await request(`/v1/circles${query(cursor, limit)}`), summary, limit, item=>item.id); },
     async circle(circleId: string): Promise<Details> { if (!id(circleId)) throw new SocialError('INVALID_INPUT'); return details(await request(`/v1/circles/${encodeURIComponent(circleId)}`)); },
-    async invitations(cursor = '', limit = 25): Promise<Page<Invitation>> { return page(await request(`/v1/circles/invitations${query(cursor, limit)}`), invitation, limit); },
+    async invitations(cursor = '', limit = 25): Promise<Page<Invitation>> { return page(await request(`/v1/circles/invitations${query(cursor, limit)}`), invitation, limit, item=>item.id); },
   };
+}
+
+export type FriendKind = 'accepted' | 'incoming' | 'outgoing' | 'blocked';
+export type Contact = {accountId:string;pin:string;status:'pending'|'accepted'|'blocked';requestId?:string};
+export type FriendRequest = {id:string;requestedBy:string;targetId:string;status:'pending'|'accepted'};
+export type CircleRecord = {id:string;epoch:number;memberCount:number;closed:boolean};
+export type InvitationResponse = Omit<Invitation,'status'> & ({status:'accepted';intervalId:string}|{status:'declined'});
+const pinValid = (value:unknown):value is string=>typeof value==='string'&&/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(value);
+function requireIDs(...values:unknown[]):void { if(values.some(value=>!id(value)||value==='.'||value==='..'))throw new SocialError('INVALID_INPUT'); }
+function requireBoolean(value:unknown):void {if(typeof value!=='boolean')throw new SocialError('INVALID_INPUT');}
+function contact(value:unknown,kind:FriendKind):Contact {
+  const v=object(value), expected=kind==='accepted'?'accepted':kind==='blocked'?'blocked':'pending';
+  if(!id(v.accountId)||!pinValid(v.pin)||v.status!==expected||(kind!=='blocked'&&!id(v.requestId)))throw new SocialError('INVALID_RESPONSE');
+  return {accountId:v.accountId,pin:v.pin,status:expected,...(kind!=='blocked'?{requestId:v.requestId as string}:{})};
+}
+function friendRequest(value:unknown):FriendRequest {
+  const v=object(value);if(!id(v.id)||!id(v.requestedBy)||!id(v.targetId)||v.requestedBy===v.targetId||(v.status!=='pending'&&v.status!=='accepted'))throw new SocialError('INVALID_RESPONSE');
+  return {id:v.id,requestedBy:v.requestedBy,targetId:v.targetId,status:v.status};
+}
+function circleRecord(value:unknown):CircleRecord {
+  const v=object(value);if(!id(v.id)||!positive(v.epoch)||typeof v.closed!=='boolean'||typeof v.memberCount!=='number'||!Number.isInteger(v.memberCount)||(v.closed?v.memberCount!==0:v.memberCount<1||v.memberCount>20))throw new SocialError('INVALID_RESPONSE');
+  return {id:v.id,epoch:v.epoch,memberCount:v.memberCount,closed:v.closed};
+}
+function invitationResponse(value:unknown):InvitationResponse {
+  const v=object(value); const base=invitation({...v,status:'pending'});
+  if(v.status==='accepted'&&id(v.intervalId))return {...base,status:'accepted',intervalId:v.intervalId};
+  if(v.status==='declined'&&v.intervalId===undefined)return {...base,status:'declined'};
+  throw new SocialError('INVALID_RESPONSE');
 }

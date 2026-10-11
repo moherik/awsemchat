@@ -4,6 +4,7 @@ import { createSessionOwner } from './session-owner';
 import { createSessionVault, installationDeviceId } from './session-vault';
 import { createLoginFlow } from './login-flow';
 import { bindAccountEncryption } from '../../security/bound-encryption';
+import { createSocialAPI } from '../social/api';
 
 async function initialize() {
   const origin = process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? 'http://127.0.0.1:8088' : '');
@@ -16,7 +17,7 @@ async function initialize() {
     encryption = await bindAccountEncryption(owner, new URL(origin).origin);
   }, Crypto.randomUUID);
   await flow.restore();
-  return { owner, flow, developmentCode: (phone: string) => api.developmentCode(phone), encryption() {
+  return { owner, flow, social: createSocialAPI(origin, () => owner.requireSession(), __DEV__), developmentCode: (phone: string) => api.developmentCode(phone), encryption() {
     owner.requireSession();
     if (!encryption || flow.getSnapshot().phase !== 'ready') throw new AuthError('UNAVAILABLE');
     return encryption;
