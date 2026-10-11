@@ -54,6 +54,12 @@ export function createAuthAPI(baseURL: string, development = false) {
     } finally { clearTimeout(timer); }
   }
   return {
+    async developmentCode(phone: string): Promise<string> {
+      if (!development || !local || url.protocol !== 'http:') throw new AuthError('CONFIGURATION');
+      const data = object(await request('/dev/otp', 'POST', { phone }));
+      if (typeof data.code !== 'string' || !/^[0-9]{6}$/.test(data.code)) throw new AuthError('INVALID_RESPONSE');
+      return data.code;
+    },
     async start(phone: string, deviceId: string, operationId: string): Promise<Challenge> {
       const data = object(await request('/v1/auth/challenges', 'POST', { phone, deviceId, operationId }));
       if (!identifier(data.challengeId) || !expiryValid(data.expiresAt) || (data.status !== undefined && data.status !== 'pending')) throw new AuthError('INVALID_RESPONSE');

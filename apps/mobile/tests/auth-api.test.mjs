@@ -63,3 +63,10 @@ test('transport interruption becomes a safe network error',async t=>{
  const {api}=await fixture(t,(req)=>req.socket.destroy());
  await assert.rejects(api.start('+6281234567890','device-one','operation-one'),e=>e instanceof AuthError&&e.code==='NETWORK');
 });
+
+test('development code helper reads only the explicit loopback mock',async t=>{
+ const {api,requests}=await fixture(t,(_,res)=>json(res,200,{code:'123456'}));
+ assert.equal(await api.developmentCode('+6281234567890'),'123456');
+ assert.deepEqual(requests[0].body,{phone:'+6281234567890'});assert.equal(requests[0].path,'/dev/otp');
+ await assert.rejects(createAuthAPI('https://api.example.com',true).developmentCode('+6281234567890'),e=>e.code==='CONFIGURATION');
+});

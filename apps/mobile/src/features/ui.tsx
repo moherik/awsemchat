@@ -1,6 +1,7 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { useDemo } from "./demo-store";
 import { ReactNode } from "react";
+import type { TextInputProps } from 'react-native';
 import {
   Pressable,
   ScrollView,
@@ -180,11 +181,15 @@ export function Field({
   value,
   onChange,
   secure = false,
+  keyboardType,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   secure?: boolean;
+  keyboardType?: TextInputProps['keyboardType'];
+  maxLength?: number;
 }) {
   const c = usePalette();
   return (
@@ -195,6 +200,8 @@ export function Field({
         value={value}
         onChangeText={onChange}
         secureTextEntry={secure}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
         style={{
           color: c.text,
           backgroundColor: c.bg,

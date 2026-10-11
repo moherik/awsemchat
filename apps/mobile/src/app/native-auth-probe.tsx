@@ -7,13 +7,15 @@ import { createSessionOwner } from '../features/auth/session-owner';
 import { createSessionVault, installationDeviceId } from '../features/auth/session-vault.native';
 import { bindAccountEncryption } from '../security/bound-encryption.native';
 import { DurableEncryptionError } from '../security/durable-encryption';
+import { createLoginFlow } from '../features/auth/login-flow';
+import * as Crypto from 'expo-crypto';
 
 export default function NativeAuthProbe() {
   const { phase, run } = useLocalSearchParams<{ phase?: string; run?: string }>();
   const started = useRef(false);
   const [result, setResult] = useState('Native authentication validation');
   useEffect(() => {
-    if (!__DEV__ || started.current || !run || !/^[0-9]{8}$/.test(run) || !['start', 'resume', 'bind'].includes(phase ?? '')) return;
+    if (!__DEV__ || started.current || !run || !/^[0-9]{8}$/.test(run) || !['start', 'resume', 'bind', 'flow'].includes(phase ?? '')) return;
     started.current = true;
     void (async () => {
       console.info('AWSEM_NATIVE_AUTH_PROBE', JSON.stringify({ status: 'START', synthetic: true, phase }));
@@ -23,6 +25,21 @@ export default function NativeAuthProbe() {
         const deviceId = await installationDeviceId();
         const vault = await createSessionVault(`native-auth-probe.${run}`);
         const owner = createSessionOwner(api, vault, deviceId);
+        if (phase === 'flow') {
+          const login = createLoginFlow(owner, () => bindAccountEncryption(owner, origin), Crypto.randomUUID);
+          await login.restore();
+          if (login.getSnapshot().phase !== 'phone') throw new AuthError('FIXTURE_NOT_EMPTY');
+          const phone = `+62877${run}`;
+          await login.submitPhone(phone);
+          if (login.getSnapshot().phase !== 'code') throw new AuthError('CODE_STEP_MISSING');
+          await login.verify(await api.developmentCode(phone));
+          if (login.getSnapshot().phase !== 'ready' || await vault.read() === null) throw new AuthError('LOGIN_NOT_READY');
+          await login.logout();
+          if (login.getSnapshot().phase !== 'phone' || await vault.read() !== null) throw new AuthError('LOGOUT_FAILED');
+          setResult('Native login flow passed.');
+          console.info('AWSEM_NATIVE_AUTH_PROBE', JSON.stringify({ status: 'PASS', synthetic: true, phase, checks: ['PHONE_TO_CODE', 'CODE_TO_NATIVE_CRYPTO', 'PERSISTENCE_BEFORE_READY', 'LOGOUT_TO_PHONE'] }));
+          return;
+        }
         const key = `auth.probe.${run}`;
         const options = { keychainService: 'awsemchat.auth.probe', keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
         if (phase === 'start') {

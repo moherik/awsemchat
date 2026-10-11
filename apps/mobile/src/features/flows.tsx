@@ -8,7 +8,8 @@ import { Image } from "expo-image";
 import { Host, Switch } from "@expo/ui";
 import { useState } from "react";
 import { PopupMenu } from "./popup-menu";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, Platform } from "react-native";
+import AuthenticationScreen from './auth/screen';
 import { router, useLocalSearchParams } from "expo-router";
 import { Page, Action, Copy, Field, rowStyles, usePalette } from "./ui";
 import {
@@ -91,6 +92,7 @@ export default function Flows() {
     setSelected((old) =>
       old.includes(name) ? old.filter((x) => x !== name) : [...old, name],
     );
+  if (Platform.OS !== 'web' && ['phone', 'verify'].includes(screen)) return <AuthenticationScreen />;
   return (
     <Page title={titles[screen] ?? "AwsemChat"} compact={screen === "new-chat"}>
       {screen === "appearance" && (
