@@ -7,10 +7,12 @@ import (
 	"regexp"
 
 	"awsemchat/services/api/internal/auth"
+	"awsemchat/services/api/internal/friends"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var ErrFull = errors.New("circle is full")
 var ErrDenied = errors.New("circle action denied")
 var ErrInvalid = errors.New("invalid circle input")
 var ErrAdminHandoff = errors.New("circle admin handoff required")
@@ -170,4 +172,169 @@ func (s *Service) Handoff(ctx context.Context, actor auth.Principal, circleID, s
 		return auth.ErrUnavailable
 	}
 	return nil
+}
+
+type Invitation struct{ ID, CircleID, InviterID, InviteeID, Status, IntervalID string }
+
+func (s *Service) Invite(ctx context.Context, actor auth.Principal, circleID, inviteeID string) (Invitation, error) {
+	if !idPattern.MatchString(circleID) || !idPattern.MatchString(inviteeID) {
+		return Invitation{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	defer tx.Rollback(ctx)
+	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+		return Invitation{}, err
+	}
+	var epoch int64
+	var closed bool
+	err = tx.QueryRow(ctx, "SELECT epoch,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&epoch, &closed)
+	if errors.Is(err, pgx.ErrNoRows) || closed {
+		return Invitation{}, ErrDenied
+	}
+	if err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	var allowed bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM circle_memberships WHERE circle_id=$1 AND account_id=$2 AND role='admin' AND left_epoch IS NULL)", circleID, actor.AccountID).Scan(&allowed); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	if !allowed {
+		return Invitation{}, ErrDenied
+	}
+	if err := friends.NewService(s.pool, s.auth).RequireAccepted(ctx, tx, actor, inviteeID); err != nil {
+		if errors.Is(err, friends.ErrDenied) {
+			return Invitation{}, ErrDenied
+		}
+		return Invitation{}, err
+	}
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM circle_memberships WHERE circle_id=$1 AND account_id=$2 AND left_epoch IS NULL)", circleID, inviteeID).Scan(&allowed); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	if allowed {
+		return Invitation{}, ErrDenied
+	}
+	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND invitee_id=$2 AND status='pending' AND expires_at<=now()", circleID, inviteeID); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	i := Invitation{CircleID: circleID, InviteeID: inviteeID, Status: "pending"}
+	err = tx.QueryRow(ctx, "SELECT id,inviter_id FROM circle_invites WHERE circle_id=$1 AND invitee_id=$2 AND status='pending'", circleID, inviteeID).Scan(&i.ID, &i.InviterID)
+	if err == nil {
+		if i.InviterID != actor.AccountID {
+			return Invitation{}, ErrDenied
+		}
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		i.ID = rand.Text()
+		i.InviterID = actor.AccountID
+		if _, err := tx.Exec(ctx, "INSERT INTO circle_invites(id,circle_id,inviter_id,invitee_id,status,created_epoch,expires_at) VALUES($1,$2,$3,$4,'pending',$5,now()+interval '7 days')", i.ID, circleID, actor.AccountID, inviteeID, epoch); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+	} else {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	return i, nil
+}
+func (s *Service) Respond(ctx context.Context, actor auth.Principal, invitationID string, accept bool) (Invitation, error) {
+	if !idPattern.MatchString(invitationID) {
+		return Invitation{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	defer tx.Rollback(ctx)
+	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+		return Invitation{}, err
+	}
+	i := Invitation{ID: invitationID}
+	err = tx.QueryRow(ctx, "SELECT circle_id,inviter_id,invitee_id FROM circle_invites WHERE id=$1", invitationID).Scan(&i.CircleID, &i.InviterID, &i.InviteeID)
+	if errors.Is(err, pgx.ErrNoRows) || i.InviteeID != actor.AccountID {
+		return Invitation{}, ErrDenied
+	}
+	if err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	var epoch int64
+	var count int
+	var closed bool
+	err = tx.QueryRow(ctx, "SELECT epoch,member_count,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", i.CircleID).Scan(&epoch, &count, &closed)
+	if err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	if closed {
+		return Invitation{}, ErrDenied
+	}
+	var expired bool
+	if err := tx.QueryRow(ctx, "SELECT status,COALESCE(accepted_interval_id,''),expires_at<=now() FROM circle_invites WHERE id=$1", invitationID).Scan(&i.Status, &i.IntervalID, &expired); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	if !accept && i.Status == "declined" {
+		if err := tx.Commit(ctx); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		return i, nil
+	}
+	if accept && i.Status == "accepted" {
+		var active bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM circle_memberships WHERE id=$1 AND left_epoch IS NULL)", i.IntervalID).Scan(&active); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		if !active {
+			return Invitation{}, ErrDenied
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		return i, nil
+	}
+	if i.Status != "pending" || expired {
+		return Invitation{}, ErrDenied
+	}
+	if !accept {
+		if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='declined' WHERE id=$1", invitationID); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		i.Status = "declined"
+	} else {
+		var admin, active bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM circle_memberships WHERE circle_id=$1 AND account_id=$2 AND role='admin' AND left_epoch IS NULL),EXISTS(SELECT 1 FROM circle_memberships WHERE circle_id=$1 AND account_id=$3 AND left_epoch IS NULL)", i.CircleID, i.InviterID, actor.AccountID).Scan(&admin, &active); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		if !admin || active {
+			return Invitation{}, ErrDenied
+		}
+		if err := friends.NewService(s.pool, s.auth).RequireAccepted(ctx, tx, actor, i.InviterID); err != nil {
+			if errors.Is(err, friends.ErrDenied) {
+				return Invitation{}, ErrDenied
+			}
+			return Invitation{}, err
+		}
+		if count >= 20 {
+			return Invitation{}, ErrFull
+		}
+		if epoch >= 9007199254740991 {
+			return Invitation{}, ErrDenied
+		}
+		epoch++
+		i.IntervalID = rand.Text()
+		i.Status = "accepted"
+		if _, err := tx.Exec(ctx, "INSERT INTO circle_memberships(id,circle_id,account_id,role,joined_epoch) VALUES($1,$2,$3,'member',$4)", i.IntervalID, i.CircleID, actor.AccountID, epoch); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		if _, err := tx.Exec(ctx, "UPDATE circles SET epoch=$1,member_count=member_count+1 WHERE id=$2", epoch, i.CircleID); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+		if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='accepted',accepted_interval_id=$1 WHERE id=$2", i.IntervalID, invitationID); err != nil {
+			return Invitation{}, auth.ErrUnavailable
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invitation{}, auth.ErrUnavailable
+	}
+	return i, nil
 }

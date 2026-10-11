@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -214,5 +216,176 @@ func TestAdminHandoffRequiresExistingMemberAndAllowsCreatorToLeave(t *testing.T)
 	var closed bool
 	if err := pool.QueryRow(ctx, "SELECT member_count,closed_at IS NOT NULL FROM circles WHERE id=$1", c.ID).Scan(&count, &closed); err != nil || count != 1 || closed {
 		t.Fatalf("successor Circle count=%d closed=%v err=%v", count, closed, err)
+	}
+}
+
+func addActor(t *testing.T, pool *pgxpool.Pool, id string, accepted bool) auth.Principal {
+	t.Helper()
+	ctx := context.Background()
+	digest := sha256.Sum256([]byte(id))
+	expiry := time.Now().Add(time.Hour)
+	pin := make([]byte, 8)
+	alphabet := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	for i := range pin {
+		pin[i] = alphabet[int(digest[i])%len(alphabet)]
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO auth_accounts(id,phone_digest,pin,generation) VALUES($1,$2,$3,1)", id, digest[:], string(pin)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO auth_sessions(id,account_id,device_id,generation,token_digest,created_at,expires_at) VALUES($1,$2,$3,1,$4,now(),$5)", "session-"+id, id, "device-"+id, digest[:], expiry); err != nil {
+		t.Fatal(err)
+	}
+	if accepted {
+		low, high := "alice", id
+		if low > high {
+			low, high = high, low
+		}
+		if _, err := pool.Exec(ctx, "INSERT INTO friend_links(low_id,high_id,request_id,requested_by,status) VALUES($1,$2,$3,'alice','accepted')", low, high, rand.Text()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return auth.Principal{SessionID: "session-" + id, AccountID: id, DeviceID: "device-" + id, Generation: 1, ExpiresAt: expiry}
+}
+func TestInvitationRequiresFriendshipAdminAndRecipientConsent(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	bob := addActor(t, pool, "bob", true)
+	carol := addActor(t, pool, "carol", false)
+	c, err := s.Create(ctx, a, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Invite(ctx, a, c.ID, carol.AccountID); !errors.Is(err, ErrDenied) {
+		t.Fatalf("nonfriend invite=%v", err)
+	}
+	invite, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil || retry.ID != invite.ID {
+		t.Fatalf("invite retry=%+v err=%v", retry, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT member_count FROM circles WHERE id=$1", c.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("invitation joined without consent count=%d err=%v", count, err)
+	}
+	if _, err := s.Respond(ctx, a, invite.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("sender accepted=%v", err)
+	}
+	accepted, err := s.Respond(ctx, bob, invite.ID, true)
+	if err != nil || accepted.Status != "accepted" || accepted.IntervalID == "" {
+		t.Fatalf("accept=%+v err=%v", accepted, err)
+	}
+	again, err := s.Respond(ctx, bob, invite.ID, true)
+	if err != nil || again.IntervalID != accepted.IntervalID {
+		t.Fatalf("accept retry=%+v err=%v", again, err)
+	}
+	if _, err := s.Invite(ctx, bob, c.ID, carol.AccountID); !errors.Is(err, ErrDenied) {
+		t.Fatalf("member invited=%v", err)
+	}
+	if err := s.Leave(ctx, bob, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Respond(ctx, bob, invite.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("old invite resurrected=%v", err)
+	}
+	fresh, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil || fresh.ID == invite.ID {
+		t.Fatalf("fresh invite=%+v err=%v", fresh, err)
+	}
+	rejoin, err := s.Respond(ctx, bob, fresh.ID, true)
+	if err != nil || rejoin.IntervalID == accepted.IntervalID {
+		t.Fatalf("rejoin=%+v err=%v", rejoin, err)
+	}
+	var joined, left int64
+	if err := pool.QueryRow(ctx, "SELECT fresh.joined_epoch,old.left_epoch FROM circle_memberships fresh,circle_memberships old WHERE fresh.id=$1 AND old.id=$2", rejoin.IntervalID, accepted.IntervalID).Scan(&joined, &left); err != nil || joined <= left {
+		t.Fatalf("rejoin epoch=%d prior leave=%d err=%v", joined, left, err)
+	}
+}
+
+func TestConcurrentAcceptanceNeverExceedsTwentyMembers(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	c, err := s.Create(ctx, a, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actors := make([]auth.Principal, 24)
+	invites := make([]Invitation, 24)
+	for n := range actors {
+		actors[n] = addActor(t, pool, fmt.Sprintf("peer-%02d", n), true)
+		invites[n], err = s.Invite(ctx, a, c.ID, actors[n].AccountID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	results := make(chan error, 24)
+	var wg sync.WaitGroup
+	for n := range actors {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, err := s.Respond(ctx, actors[n], invites[n].ID, true); results <- err }()
+	}
+	wg.Wait()
+	close(results)
+	accepted, full := 0, 0
+	for err := range results {
+		if err == nil {
+			accepted++
+		} else if errors.Is(err, ErrFull) {
+			full++
+		} else {
+			t.Errorf("unexpected join failure: %v", err)
+		}
+	}
+	if accepted != 19 || full != 5 {
+		t.Fatalf("accepted=%d full=%d", accepted, full)
+	}
+	var count, active int
+	if err := pool.QueryRow(ctx, "SELECT member_count,(SELECT count(*) FROM circle_memberships WHERE circle_id=$1 AND left_epoch IS NULL) FROM circles WHERE id=$1", c.ID).Scan(&count, &active); err != nil || count != 20 || active != 20 {
+		t.Fatalf("count=%d active=%d err=%v", count, active, err)
+	}
+}
+func TestBlockedAndExpiredInvitesCannotJoin(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	bob := addActor(t, pool, "bob", true)
+	c, err := s.Create(ctx, a, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO friend_blocks(actor_id,target_id) VALUES('bob','alice')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Respond(ctx, bob, invite.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("blocked join=%v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM friend_blocks"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE circle_invites SET created_at=now()-interval '8 days',expires_at=now()-interval '1 day' WHERE id=$1", invite.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Respond(ctx, bob, invite.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("expired join=%v", err)
+	}
+	fresh, err := s.Invite(ctx, a, c.ID, bob.AccountID)
+	if err != nil || fresh.ID == invite.ID {
+		t.Fatalf("expired replacement=%+v err=%v", fresh, err)
+	}
+	declined, err := s.Respond(ctx, bob, fresh.ID, false)
+	if err != nil || declined.Status != "declined" {
+		t.Fatalf("decline=%+v err=%v", declined, err)
+	}
+	if _, err := s.Respond(ctx, bob, fresh.ID, true); !errors.Is(err, ErrDenied) {
+		t.Fatalf("declined join=%v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT member_count FROM circles WHERE id=$1", c.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("denied join count=%d err=%v", count, err)
 	}
 }
