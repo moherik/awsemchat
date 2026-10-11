@@ -10,6 +10,7 @@ import { useState } from "react";
 import { PopupMenu } from "./popup-menu";
 import { View, Text, Pressable, Platform } from "react-native";
 import AuthenticationScreen from './auth/screen';
+import { NativeFriendRequests } from './social/friends-screen';
 import { router, useLocalSearchParams } from "expo-router";
 import { Page, Action, Copy, Field, rowStyles, usePalette } from "./ui";
 import {
@@ -93,6 +94,7 @@ export default function Flows() {
       old.includes(name) ? old.filter((x) => x !== name) : [...old, name],
     );
   if (Platform.OS !== 'web' && ['phone', 'verify'].includes(screen)) return <AuthenticationScreen />;
+  if (Platform.OS !== 'web' && screen === 'requests') return <NativeFriendRequests />;
   return (
     <Page title={titles[screen] ?? "AwsemChat"} compact={screen === "new-chat"}>
       {screen === "appearance" && (

@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {selectFriends} from '../src/features/social/friends-view.ts';
+const list={phase:'ready',items:[{accountId:'bob',pin:'BCDEFGHJ',status:'accepted'},{accountId:'carol',pin:'CDEFGHJK',status:'accepted'}],refreshing:false,nextCursor:'carol'};
+test('friend screen filters PINs and distinguishes no results from no friends',()=>{const selected=selectFriends(list,' bcde ');assert.deepEqual(selected.items,[list.items[0]]);assert.equal(selected.state,'content');assert.equal(selected.canLoadMore,true);assert.equal(selectFriends(list,'unknown').state,'no-results');assert.equal(selectFriends({...list,items:[],nextCursor:undefined},'').state,'empty');});
+test('friend screen never renders an empty result before initial loading resolves',()=>{for(const phase of ['idle','loading'])assert.equal(selectFriends({...list,phase,items:[]},'').state,'loading');assert.equal(selectFriends({...list,phase:'error',items:[],error:'NETWORK'},'').state,'error');assert.equal(selectFriends({...list,error:'NETWORK'},'').state,'content');assert.equal(selectFriends({...list,refreshing:true},'').canLoadMore,false);});

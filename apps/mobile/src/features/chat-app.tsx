@@ -1,3 +1,4 @@
+import { NativeFriends } from './social/friends-screen';
 import { PopupMenu } from './popup-menu';
 import { ScrollingStatus } from './scrolling-status';
 import { removeMomentAsset, updateMomentReply } from './photos/moment-links';
@@ -805,7 +806,7 @@ export default function AwsemChat() {
                 </Pressable>
               </>
             ) : tab === "Friends" ? (
-              <ScrollView contentContainerStyle={{ paddingHorizontal: s.row.paddingHorizontal, paddingVertical: 12, gap: 10 }}>
+              Platform.OS !== "web" ? <NativeFriends /> : <ScrollView contentContainerStyle={{ paddingHorizontal: s.row.paddingHorizontal, paddingVertical: 12, gap: 10 }}>
                 {menuRow("Friend requests", "account-clock-outline", () =>
                   router.push({
                     pathname: "/flow",
