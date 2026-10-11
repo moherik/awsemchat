@@ -58,7 +58,7 @@ func fixture(t *testing.T) (*Service, *pgxpool.Pool, []auth.Principal) {
 	actors := make([]auth.Principal, 3)
 	for i, item := range []struct{ id, pin string }{{"alice", "ABCDEFGH"}, {"bob", "BCDEFGHJ"}, {"carol", "CDEFGHJK"}} {
 		digest := sha256.Sum256([]byte(item.id))
-		sessionDigest := sha256.Sum256([]byte("session-" + item.id))
+		sessionDigest := sha256.Sum256([]byte(tokenFor(item.id)))
 		expiry := time.Now().Add(time.Hour)
 		if _, err := pool.Exec(ctx, "INSERT INTO auth_accounts(id,phone_digest,pin,generation) VALUES($1,$2,$3,1)", item.id, digest[:], item.pin); err != nil {
 			t.Fatal(err)

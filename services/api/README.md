@@ -40,3 +40,14 @@ go vet ./...
 ```
 
 Current verified fixture: PostgreSQL 17, local Docker container `awsemchat-mvp-postgres17`, loopback port 55432. Integration tests cover challenge expiry, replay, attempts, send limits, replacement-session revocation, logout, safe HTTP responses, explicit mock access, concurrent migrations, schema readiness and server shutdown.
+
+## Social endpoints
+
+Every route requires the current bearer token; actor identity comes from that session, never JSON input.
+
+- `GET /v1/friends?kind=accepted&limit=25&cursor=<accountId>`: kind is accepted, incoming, outgoing or blocked. Items contain opaque account ID, fixed PIN, relationship status and request ID when applicable. Empty results use `items: []`; `nextCursor` is omitted on the final page.
+- `POST /v1/friends/requests`: `{ "pin": "ABCDEFGH" }`.
+- `POST /v1/friends/requests/<requestId>/response`: `{ "accept": true }` or false for decline.
+- `PUT /v1/friends/blocks/<accountId>`: `{ "blocked": true }` or false for unblock.
+
+Requests and responses use no-store caching and safe error codes. Unknown fields, trailing JSON, missing booleans and duplicate/unknown query parameters are rejected. Profile names, statuses and avatars are encrypted client data; the social relay does not supply plaintext profile fields. Circle endpoints and mobile social synchronization are still being implemented.

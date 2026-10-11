@@ -93,6 +93,19 @@ func TestServerRequiresExplicitMigrationAndServesAuthentication(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("verify=%d %s", w.Code, w.Body.String())
 	}
+	var signed struct {
+		Token string `json:"accessToken"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &signed); err != nil || signed.Token == "" {
+		t.Fatal("verified session missing")
+	}
+	list := httptest.NewRequest(http.MethodGet, "/v1/friends", nil)
+	list.Header.Set("Authorization", "Bearer "+signed.Token)
+	listed := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(listed, list)
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"items":[]`) {
+		t.Fatalf("mounted social list=%d %s", listed.Code, listed.Body.String())
+	}
 	if _, err := pool.Exec(ctx, "DROP TABLE auth_sessions"); err != nil {
 		t.Fatal(err)
 	}
