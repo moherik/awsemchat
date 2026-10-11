@@ -80,6 +80,42 @@ pub(super) struct Publication {
     pub bundles: Vec<SignedPublicBundle>,
 }
 impl Publication {
+    pub(super) fn registration(
+        &self,
+        account: &Account,
+        account_id: &str,
+        device_id: &str,
+        generation: u64,
+    ) -> Result<serde_json::Value> {
+        if self.bundles.is_empty() || self.bundles.len() > TARGET_KEYS {
+            return Err("STATE_INVALID");
+        }
+        let own = Keys::account(account);
+        let mut wire = b"awsemchat.olm.account-publication\0".to_vec();
+        wire.extend(1u32.to_be_bytes());
+        for value in [account_id, device_id] {
+            wire.extend((value.len() as u16).to_be_bytes());
+            wire.extend(value.as_bytes());
+        }
+        wire.extend(generation.to_be_bytes());
+        wire.extend((self.bundles.len() as u16).to_be_bytes());
+        for bundle in &self.bundles {
+            if bundle.identity != own.identity || bundle.signing_identity != own.signing_identity {
+                return Err("STATE_INVALID");
+            }
+            let bytes = bundle.bytes()?;
+            let signature =
+                Ed25519Signature::from_base64(&bundle.signature).map_err(|_| "STATE_INVALID")?;
+            account
+                .ed25519_key()
+                .verify(&bytes, &signature)
+                .map_err(|_| "STATE_INVALID")?;
+            wire.extend((bytes.len() as u32).to_be_bytes());
+            wire.extend(bytes);
+            wire.extend(decode(&bundle.signature, 64)?);
+        }
+        Ok(serde_json::json!({"bundles": self.bundles, "proof": account.sign(wire).to_base64()}))
+    }
     pub fn generate(account: &mut Account, operation: &str, now: u64) -> Result<Self> {
         let count = TARGET_KEYS
             .checked_sub(account.stored_one_time_key_count())

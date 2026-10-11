@@ -5,7 +5,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +81,28 @@ func TestRegistrationRejectsEmptyDuplicateAndMixedPublications(t *testing.T) {
 	r.Proof += "=="
 	if err := r.Validate(actor, time.Unix(1000, 0)); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("padded proof=%v, want invalid", err)
+	}
+}
+
+func TestNativeAccountPublicationProofVerifiesInGo(t *testing.T) {
+	raw, err := os.ReadFile("testdata/native-registration.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registration Registration
+	if err := json.Unmarshal(raw, &registration); err != nil {
+		t.Fatal(err)
+	}
+	if len(registration.Bundles) != 20 {
+		t.Fatalf("native registration bundles=%d, want20", len(registration.Bundles))
+	}
+	actor := auth.Principal{AccountID: "interop-account", DeviceID: "interop-device", Generation: 7}
+	now := time.Unix(registration.Bundles[0].IssuedAt, 0)
+	if err := registration.Validate(actor, now); err != nil {
+		t.Fatalf("native registration.Validate=%v, want nil", err)
+	}
+	actor.Generation++
+	if err := registration.Validate(actor, now); !errors.Is(err, ErrSignature) {
+		t.Fatalf("native stale generation=%v, want signature rejected", err)
 	}
 }

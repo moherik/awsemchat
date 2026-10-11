@@ -15,7 +15,7 @@ Updated2026-10-12 from the current checkout and recorded test/device evidence. C
 
 | Task | Current status | Remaining work |
 |---|---|---|
-|1. Security/provider feasibility | Partial; several native probes verified | Complete account-bound native publication proof, authenticated directory/allocation and application audience/key lifecycle; resolve capacity/generation retirement; finish provider/device gates and protocol review. |
+|1. Security/provider feasibility | Partial; several native probes verified | Complete Android integration of the account-bound native proof and authenticated directory/allocation and application audience/key lifecycle; resolve capacity/generation retirement; finish provider/device gates and protocol review. |
 |2. Identity/mobile foundation | Core implemented; integration partial | Application-wide authentication gating, foreground replacement-session revalidation, complete generation/archive lifecycle and device walkthrough. Real SMS adapter is deferred by owner’s mock-first decision. |
 |3. Friends/Circles | Backend implemented; mobile partial | Native Circle controllers/screens, encrypted names/status/avatar and details editing, live-chat navigation; prove key distribution excludes prejoin/removed audiences on devices. |
 |4. Reliable encrypted messaging | Native primitives implemented; service unfinished | Key publication/allocation, encrypted message relay/realtime, recipient-bound idempotency, offline synchronization, delivery receipts and two-device end-to-end flows. |
@@ -39,7 +39,7 @@ No numbered task is claimed completely finished: each includes production integr
 
 ## Immediate implementation order
 
-1. Native account-bound publication proof, authenticated key registration/allocation and peer identity handling.
+1. Android integration of the implemented native publication proof, authenticated key registration/allocation and peer identity handling.
 2. Reliable encrypted private/Circle message service and real chat synchronization.
 3. Encrypted profile/Circle details and complete native social/chat UI integration.
 4. Encrypted media and Moments, then shared collections/safety/notifications/music and complete product backup integration.

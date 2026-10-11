@@ -28,6 +28,14 @@ enum Request {
     ConfirmPublication {
         operation: String,
     },
+    SignPublication {
+        operation: String,
+        #[serde(rename = "accountId")]
+        account_id: String,
+        #[serde(rename = "deviceId")]
+        device_id: String,
+        generation: u64,
+    },
     PrekeyStatus {},
     ObservePeer {
         peer: String,
@@ -244,6 +252,25 @@ impl State {
                 self.pending_publication = Some(operation.clone());
                 self.publications.insert(operation, publication);
                 Ok(output)
+            }
+            Request::SignPublication {
+                operation,
+                account_id,
+                device_id,
+                generation,
+            } => {
+                id(&operation)?;
+                id(&account_id)?;
+                id(&device_id)?;
+                if generation == 0 || generation > 9007199254740991 {
+                    return Err("INVALID_INPUT");
+                }
+                let publication = self
+                    .publications
+                    .get(&operation)
+                    .ok_or("UNKNOWN_OPERATION")?;
+                let account = self.account_copy()?;
+                publication.registration(&account, &account_id, &device_id, generation)
             }
             Request::ConfirmPublication { operation } => {
                 id(&operation)?;
