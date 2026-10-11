@@ -18,7 +18,8 @@ impl Store {
 }
 fn init() -> (Store, Value) {
     let mut s = Store::default();
-    let b = s.call(json!({"op":"initialize"}));
+    s.call(json!({"op":"initialize"}));
+    let b = s.call(json!({"op":"preparePublication","operation":"initial"}))["bundles"][0].clone();
     (s, b)
 }
 fn pin(s: &mut Store, peer: &str, b: &Value) {
@@ -35,7 +36,7 @@ fn pair() -> (Store, Store, Value, Value) {
     let (mut b, bb) = init();
     pin(&mut a, "bob", &bb);
     pin(&mut b, "alice", &ab);
-    a.call(json!({"op":"outbound","peer":"bob","prekey":bb["prekey"]}));
+    a.call(json!({"op":"outbound","peer":"bob","bundle":bb}));
     (a, b, ab, bb)
 }
 #[test]
@@ -91,7 +92,7 @@ fn history_restore_excludes_live_state_and_corruption_fails() {
     let records = b.call(json!({"op":"exportHistory"}));
     let (mut fresh, identity) = init();
     fresh.call(json!({"op":"importHistory","records":records}));
-    assert_eq!(fresh.call(json!({"op":"bundle"})), identity);
+    assert_eq!(fresh.call(json!({"op":"bundle"})), peer_keys(&identity));
     fresh.rejects(send(), "UNKNOWN_PEER");
     fresh.rejects(
         json!({"op":"importHistory","records":[],"sessions":{}}),
@@ -204,7 +205,7 @@ fn exhausted_pin_history_commits_terminal_quarantine() {
         pin(&mut a, "bob", keys);
         acknowledge(&mut a, keys);
     }
-    a.call(json!({"op":"outbound","peer":"bob","prekey":replacement["prekey"]}));
+    a.call(json!({"op":"outbound","peer":"bob","bundle":replacement}));
     a.call(send());
     a.call(json!({"op":"verifyPeer","peer":"bob","keys":peer_keys(&replacement)}));
     let observed = a.call(json!({"op":"observePeer","peer":"bob","keys":peer_keys(&original)}));
@@ -225,7 +226,7 @@ fn exhausted_pin_history_commits_terminal_quarantine() {
 }
 #[test]
 fn returning_to_original_identity_does_not_release_original_outbox() {
-    let (mut a, _, _, original) = pair();
+    let (mut a, mut b, _, original) = pair();
     a.call(send());
     let (_, replacement) = init();
     pin(&mut a, "bob", &replacement);
@@ -234,7 +235,9 @@ fn returning_to_original_identity_does_not_release_original_outbox() {
     acknowledge(&mut a, &original);
     a = Store(a.0.clone());
     a.rejects(json!({"op":"retry","operation":"one"}), "IDENTITY_CHANGED");
-    a.call(json!({"op":"outbound","peer":"bob","prekey":original["prekey"]}));
+    let unused =
+        b.call(json!({"op":"preparePublication","operation":"initial"}))["bundles"][1].clone();
+    a.call(json!({"op":"outbound","peer":"bob","bundle":unused}));
     let mut fresh = send();
     fresh["operation"] = json!("new");
     a.call(fresh);

@@ -1,3 +1,4 @@
+import { runSignedPrekeyHarness } from './signed-prekey-harness';
 import { nativeCrypto } from '../../modules/awsemchat-crypto/src/AwsemchatCryptoModule';
 import { durableEncryption, DurableEncryptionError, type DurableEnvelope, type PeerKeys } from './durable-encryption';
 const names = ['probe-durable-a', 'probe-durable-b', 'probe-durable-c', 'probe-durable-fault'];
@@ -14,6 +15,7 @@ async function control(namespace: string, action: string, input = '') {
 }
 export async function runDurableCryptoHarness(phase: string) {
   if (!__DEV__) throw new Error('UNAVAILABLE');
+  if (phase.startsWith('prekey')) return runSignedPrekeyHarness(phase);
   const [a, b, c] = names.map(durableEncryption);
   if (phase === 'pinResume') {
     assert((await a.peer('capacity-peer')).historyExhausted);
@@ -49,7 +51,9 @@ export async function runDurableCryptoHarness(phase: string) {
   for (const name of names) await control(name, 'reset');
   const ab = await a.initialize(); const bb = await b.initialize(); const cb = await c.initialize();
   await a.observePeer('bob', keys(bb)); await b.observePeer('alice', keys(ab));
-  await a.outbound('bob', bb.prekey);
+  const bp = await b.preparePublication('initial'); await b.confirmPublication('initial');
+  const cp = await c.preparePublication('initial'); await c.confirmPublication('initial');
+  await a.outbound('bob', bp.bundles[0]);
   if (phase === 'crashBefore') {
     await control(names[0], 'killBeforeCommit'); await a.send(input); throw new Error('PROCESS_NOT_KILLED');
   }
@@ -85,7 +89,7 @@ export async function runDurableCryptoHarness(phase: string) {
   await rejected(() => a.retry('one'), 'IDENTITY_CHANGED');
   await rejected(() => a.send({ ...input, operation: 'two' }), 'IDENTITY_CHANGED');
   await a.acknowledgePeer('bob', keys(cb)); await rejected(() => a.retry('one'), 'IDENTITY_CHANGED');
-  await a.outbound('bob', cb.prekey);
+  await a.outbound('bob', cp.bundles[0]);
   await a.send({ ...input, operation: 'two' });
   await a.observePeer('bob', keys(bb)); await a.acknowledgePeer('bob', keys(bb));
   await rejected(() => a.retry('one'), 'IDENTITY_CHANGED');
@@ -94,7 +98,7 @@ export async function runDurableCryptoHarness(phase: string) {
     const changed = keys(i % 2 === 0 ? cb : bb);
     await a.observePeer('capacity-peer', changed); await a.acknowledgePeer('capacity-peer', changed);
   }
-  await a.outbound('capacity-peer', cb.prekey);
+  await a.outbound('capacity-peer', cp.bundles[1]);
   await a.send({ ...input, operation: 'capacity-operation', recipients: ['capacity-peer'] });
   await a.verifyPeer('capacity-peer', keys(cb));
   const exhausted = await a.observePeer('capacity-peer', keys(bb));

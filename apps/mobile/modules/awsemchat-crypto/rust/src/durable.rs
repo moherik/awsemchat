@@ -1,6 +1,9 @@
 //! Native candidate transactions. Callers must seal and commit before releasing `output`.
+#[path = "prekeys.rs"]
+mod prekeys;
 use crate::{Result, WireMessage, MAX_INPUT, MAX_PLAINTEXT};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use prekeys::{Publication, SignedPublicBundle, MAX_PUBLICATIONS, MAX_USED, TARGET_KEYS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,6 +22,13 @@ const MAX_HISTORY: usize = 512;
 enum Request {
     Initialize {},
     Bundle {},
+    PreparePublication {
+        operation: String,
+    },
+    ConfirmPublication {
+        operation: String,
+    },
+    PrekeyStatus {},
     ObservePeer {
         peer: String,
         keys: Keys,
@@ -36,7 +46,7 @@ enum Request {
     },
     Outbound {
         peer: String,
-        prekey: String,
+        bundle: SignedPublicBundle,
     },
     Send {
         operation: String,
@@ -139,6 +149,9 @@ struct Protected {
 struct State {
     version: u32,
     account: AccountPickle,
+    publications: BTreeMap<String, Publication>,
+    pending_publication: Option<String>,
+    used_prekeys: BTreeSet<String>,
     peers: BTreeMap<String, Pin>,
     sessions: BTreeMap<String, SavedSession>,
     outbox: BTreeMap<String, Outgoing>,
@@ -166,11 +179,13 @@ fn text(value: &str) -> Result<()> {
 }
 impl State {
     fn new() -> Self {
-        let mut a = Account::new();
-        a.generate_one_time_keys(20);
+        let a = Account::new();
         Self {
-            version: 1,
+            version: 2,
             account: a.pickle(),
+            publications: BTreeMap::new(),
+            pending_publication: None,
+            used_prekeys: BTreeSet::new(),
             peers: BTreeMap::new(),
             sessions: BTreeMap::new(),
             outbox: BTreeMap::new(),
@@ -180,16 +195,9 @@ impl State {
     }
     fn bundle(&self) -> Result<Value> {
         let a = self.account_copy()?;
-        let prekey = a
-            .one_time_keys()
-            .values()
-            .min_by_key(|key| key.to_base64())
-            .copied()
-            .ok_or("PREKEY_EXHAUSTED")?;
-        Ok(
-            json!({"identity":a.curve25519_key().to_base64(),"signingIdentity":a.ed25519_key().to_base64(),"prekey":prekey.to_base64()}),
-        )
+        Ok(json!(Keys::account(&a)))
     }
+
     fn account_copy(&self) -> Result<Account> {
         // Upstream pickles are serde-owned; this clone stays strictly inside native memory.
         let bytes = serde_json::to_vec(&self.account).map_err(|_| "STATE_INVALID")?;
@@ -214,10 +222,48 @@ impl State {
         }
         Ok(json!(out.bytes))
     }
-    fn apply(&mut self, request: Request) -> Result<Value> {
+    fn apply(&mut self, request: Request, now: u64) -> Result<Value> {
         match request {
             Request::Initialize {} => Err("ALREADY_EXISTS"),
             Request::Bundle {} => self.bundle(),
+            Request::PreparePublication { operation } => {
+                id(&operation)?;
+                if let Some(saved) = self.publications.get(&operation) {
+                    return Ok(json!(saved));
+                }
+                if self.pending_publication.is_some() {
+                    return Err("PUBLICATION_PENDING");
+                }
+                if self.publications.len() >= MAX_PUBLICATIONS {
+                    return Err("CAPACITY");
+                }
+                let mut account = self.account_copy()?;
+                let publication = Publication::generate(&mut account, &operation, now)?;
+                let output = json!(publication);
+                self.account = account.pickle();
+                self.pending_publication = Some(operation.clone());
+                self.publications.insert(operation, publication);
+                Ok(output)
+            }
+            Request::ConfirmPublication { operation } => {
+                id(&operation)?;
+                if !self.publications.contains_key(&operation) {
+                    return Err("UNKNOWN_OPERATION");
+                }
+                // An old acknowledgement must never mark a newer batch as published.
+                if self.pending_publication.as_ref() == Some(&operation) {
+                    let mut account = self.account_copy()?;
+                    account.mark_keys_as_published();
+                    self.account = account.pickle();
+                    self.pending_publication = None;
+                }
+                Ok(Value::Null)
+            }
+            Request::PrekeyStatus {} => {
+                let account = self.account_copy()?;
+                Ok(json!({"stored":account.stored_one_time_key_count(),
+                    "unpublished":account.one_time_keys().len(),"pending":self.pending_publication}))
+            }
             Request::ObservePeer { peer, keys } => {
                 id(&peer)?;
                 keys.validate()?;
@@ -279,15 +325,21 @@ impl State {
                 pin.verified = true;
                 Ok(json!(pin))
             }
-            Request::Outbound { peer, prekey } => {
+            Request::Outbound { peer, bundle } => {
                 let pin = self.pin(&peer)?;
+                let prekey = bundle.verify(&pin.current, now)?;
+                let use_id = bundle.use_id();
+                if self.used_prekeys.contains(&use_id) {
+                    return Err("PREKEY_REUSED");
+                }
+                if self.used_prekeys.len() >= MAX_USED {
+                    return Err("CAPACITY");
+                }
                 if self.sessions.contains_key(&peer) {
                     return Err("SESSION_EXISTS");
                 }
                 let identity = Curve25519PublicKey::from_base64(&pin.current.identity)
                     .map_err(|_| "STATE_INVALID")?;
-                let prekey =
-                    Curve25519PublicKey::from_base64(&prekey).map_err(|_| "INVALID_INPUT")?;
                 let session = self
                     .account_copy()?
                     .create_outbound_session(SessionConfig::version_1(), identity, prekey)
@@ -299,6 +351,7 @@ impl State {
                         pickle: session.pickle(),
                     },
                 );
+                self.used_prekeys.insert(use_id);
                 Ok(Value::Null)
             }
             Request::Send {
@@ -510,6 +563,15 @@ impl State {
 
 /// Native-only transaction boundary, never exposed as a JS snapshot API.
 pub fn prepare(snapshot: Option<&str>, input: &str) -> Result<(String, String)> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "STATE_UNAVAILABLE")?
+        .as_secs();
+    prepare_at(snapshot, input, now)
+}
+
+// Native-only clock seam: the Expo API cannot supply or override time.
+fn prepare_at(snapshot: Option<&str>, input: &str, now: u64) -> Result<(String, String)> {
     if input.len() > MAX_INPUT {
         return Err("INPUT_TOO_LARGE");
     }
@@ -519,11 +581,24 @@ pub fn prepare(snapshot: Option<&str>, input: &str) -> Result<(String, String)> 
             if saved.len() > MAX_STATE {
                 return Err("CAPACITY");
             }
-            let s: State = serde_json::from_str(saved).map_err(|_| "STATE_INVALID")?;
-            if s.version != 1 {
+            let header: Value = serde_json::from_str(saved).map_err(|_| "STATE_INVALID")?;
+            if header.get("version").is_none() {
+                return Err("STATE_INVALID");
+            }
+            if header["version"] != 2 {
                 return Err("STATE_VERSION");
             }
-            if s.peers.len() > MAX_PEERS
+            let s: State = serde_json::from_value(header).map_err(|_| "STATE_INVALID")?;
+            if s.publications.len() > MAX_PUBLICATIONS
+                || s.used_prekeys.len() > MAX_USED
+                || s.publications
+                    .values()
+                    .any(|p| p.bundles.is_empty() || p.bundles.len() > TARGET_KEYS)
+                || s.pending_publication
+                    .as_ref()
+                    .is_some_and(|id| !s.publications.contains_key(id))
+                || s.account_copy()?.stored_one_time_key_count() > TARGET_KEYS
+                || s.peers.len() > MAX_PEERS
                 || s.sessions.len() > MAX_PEERS
                 || s.outbox.len() > MAX_OUTBOX
                 || s.history.len() > MAX_HISTORY
@@ -544,11 +619,48 @@ pub fn prepare(snapshot: Option<&str>, input: &str) -> Result<(String, String)> 
     let output = if initializing {
         state.bundle()?
     } else {
-        state.apply(request)?
+        state.apply(request, now)?
     };
     let next = serde_json::to_string(&state).map_err(|_| "STATE_INVALID")?;
     if next.len() > MAX_STATE {
         return Err("CAPACITY");
     }
     Ok((next, output.to_string()))
+}
+
+#[cfg(test)]
+mod signed_transaction_tests {
+    use super::*;
+    #[test]
+    fn expired_bundle_and_full_use_ledger_do_not_create_sessions() {
+        let (bob, _) = prepare_at(None, r#"{"op":"initialize"}"#, 1000).unwrap();
+        let (_, publication) = prepare_at(
+            Some(&bob),
+            r#"{"op":"preparePublication","operation":"initial"}"#,
+            1000,
+        )
+        .unwrap();
+        let publication: Value = serde_json::from_str(&publication).unwrap();
+        let bundle = &publication["bundles"][0];
+        let (alice, _) = prepare_at(None, r#"{"op":"initialize"}"#, 1000).unwrap();
+        let request = json!({"op":"observePeer","peer":"bob","keys":{
+            "identity":bundle["identity"],"signingIdentity":bundle["signingIdentity"]}})
+        .to_string();
+        let (alice, _) = prepare_at(Some(&alice), &request, 1000).unwrap();
+        let request = json!({"op":"outbound","peer":"bob","bundle":bundle}).to_string();
+        assert_eq!(
+            prepare_at(Some(&alice), &request, 605800).err(),
+            Some("BUNDLE_EXPIRED")
+        );
+        let mut full: State = serde_json::from_str(&alice).unwrap();
+        full.used_prekeys = (0..MAX_USED).map(|i| format!("retained-{i}")).collect();
+        let full = serde_json::to_string(&full).unwrap();
+        assert_eq!(
+            prepare_at(Some(&full), &request, 1000).err(),
+            Some("CAPACITY")
+        );
+        let (accepted, _) = prepare_at(Some(&alice), &request, 1000).unwrap();
+        let accepted: State = serde_json::from_str(&accepted).unwrap();
+        assert_eq!(accepted.sessions.len(), 1);
+    }
 }
