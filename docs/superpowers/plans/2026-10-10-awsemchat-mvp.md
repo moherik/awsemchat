@@ -1,6 +1,6 @@
 # AwsemChat MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+> **Current execution:** The owner selected inline `superpowers:test-driven-development` and explicitly disabled subagent-driven development. Implement task-by-task with observed failing tests, minimal implementation and full relevant suite verification.
 
 **Goal:** Deliver the agreed Android MVP without weakening its encrypted private audiences or history-recovery guarantees.
 
@@ -22,7 +22,7 @@
 - PING/PONG only in private chats.
 - Circle messages show latest profile status; no Now Playing in Circle bubbles.
 - All three delivery stages in the spec remain in the MVP.
-- Preserve the approved UI in `docs/technical/ui-backend-handoff.md`; no redesign. Anti Slop enforcement is disabled for the currently authorized session per user override; privacy constraints remain binding.
+- Preserve the approved UI in `docs/technical/ui-backend-handoff.md`; no redesign. Anti Slop applies during implementation per the owner's session choice; privacy constraints remain binding.
 - No external deployment, credential creation, provider purchase, or app-store submission is included in plan execution without scoped authorization.
 
 ## Review Focus
@@ -54,6 +54,8 @@ This document sequences the whole MVP. Task 1 produces the concrete security/pro
 - [ ] Gate: only proceed to dependent production slices when their integration contracts are verified. Report provider or protocol conflicts to the user with a concrete alternative; preserve MVP scope until the user changes it.
 
 ## Task 2: Identity and mobile foundation
+
+Progress (2026-10-11): Go authentication core, explicit migration command, local API command, startup/readiness checks and graceful shutdown pass real PostgreSQL17 integration and race tests. Owner chose mock SMS first; the mock requires explicit development mode and loopback binding. Contact PIN is fixed. Mobile login/session integration and device validation remain pending; this task is not complete. See `docs/technical/identity-service.md` and `services/api/README.md`.
 
 **Files:** `apps/mobile/app.config.ts`, `apps/mobile/src/app/`, `apps/mobile/src/features/auth/`, `apps/mobile/src/storage/`, `services/api/cmd/api/main.go`, `services/api/internal/auth/`, `services/api/migrations/001_identity.sql`.
 
@@ -164,7 +166,7 @@ The UI handoff records the owner's choice to explore Android music sessions; thi
 - [ ] Verify real functional screens against all 12 spec acceptance scenarios, not fabricated activity. Check empty/loading/error, text scaling, TalkBack, both themes, permissions, offline behavior, and every control.
 - [ ] Run Go tests/integration tests, mobile tests/type checks, and actual Android build; record versions, commands, outputs, and device walkthrough evidence. Address failures before completion claims.
 - [ ] Complete protocol/security review, credential configuration checklist, and product launch policy requirements. List remaining external access or user decisions accurately.
-- [ ] Validate approved UI interactions against real production state, commit verified work and hand over runnable Android MVP. Current session disables Anti Slop enforcement. Publishing requires its own scoped authorization.
+- [ ] Validate approved UI interactions against real production state, commit verified work and hand over runnable Android MVP. Apply Anti Slop during implementation as selected by the owner. Publishing requires its own scoped authorization.
 
 ## Self-review and handoff
 
