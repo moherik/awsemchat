@@ -42,16 +42,9 @@ func (s *Service) pair(ctx context.Context, actor auth.Principal, peer string, w
 		return auth.ErrUnavailable
 	}
 	defer tx.Rollback(ctx)
-	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+	low, high, err := s.lockPair(ctx, tx, actor, peer)
+	if err != nil {
 		return err
-	}
-	low, high := actor.AccountID, peer
-	if low > high {
-		low, high = high, low
-	}
-	digest := sha256.Sum256([]byte("awsemchat.friend-pair\x00" + low + "\x00" + high))
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(binary.BigEndian.Uint64(digest[:8]))); err != nil {
-		return auth.ErrUnavailable
 	}
 	if err := work(tx, low, high); err != nil {
 		return err
@@ -60,6 +53,24 @@ func (s *Service) pair(ctx context.Context, actor auth.Principal, peer string, w
 		return auth.ErrUnavailable
 	}
 	return nil
+}
+
+func (s *Service) lockPair(ctx context.Context, tx pgx.Tx, actor auth.Principal, peer string) (string, string, error) {
+	if tx == nil || !idPattern.MatchString(peer) || peer == actor.AccountID {
+		return "", "", ErrDenied
+	}
+	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+		return "", "", err
+	}
+	low, high := actor.AccountID, peer
+	if low > high {
+		low, high = high, low
+	}
+	digest := sha256.Sum256([]byte("awsemchat.friend-pair\x00" + low + "\x00" + high))
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(binary.BigEndian.Uint64(digest[:8]))); err != nil {
+		return "", "", auth.ErrUnavailable
+	}
+	return low, high, nil
 }
 func blocked(ctx context.Context, tx pgx.Tx, low, high string) (bool, error) {
 	var value bool
@@ -203,4 +214,92 @@ func (s *Service) Block(ctx context.Context, actor auth.Principal, peer string, 
 		}
 		return nil
 	})
+}
+
+func (s *Service) RequireAccepted(ctx context.Context, tx pgx.Tx, actor auth.Principal, peer string) error {
+	low, high, err := s.lockPair(ctx, tx, actor, peer)
+	if err != nil {
+		return err
+	}
+	denied, err := blocked(ctx, tx, low, high)
+	if err != nil {
+		return err
+	}
+	if denied {
+		return ErrDenied
+	}
+	var accepted bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM friend_links WHERE low_id=$1 AND high_id=$2 AND status='accepted')", low, high).Scan(&accepted); err != nil {
+		return auth.ErrUnavailable
+	}
+	if !accepted {
+		return ErrDenied
+	}
+	return nil
+}
+
+type Contact struct {
+	AccountID string `json:"accountId"`
+	PIN       string `json:"pin"`
+	RequestID string `json:"requestId,omitempty"`
+	Status    string `json:"status"`
+}
+type Page struct {
+	Items      []Contact `json:"items"`
+	NextCursor string    `json:"nextCursor,omitempty"`
+}
+
+func (s *Service) List(ctx context.Context, actor auth.Principal, kind, cursor string, limit int) (Page, error) {
+	if limit < 1 || limit > 100 || (cursor != "" && !idPattern.MatchString(cursor)) {
+		return Page{}, ErrInvalid
+	}
+	condition := ""
+	switch kind {
+	case "accepted":
+		condition = "l.status='accepted'"
+	case "incoming":
+		condition = "l.status='pending' AND l.requested_by<>$1"
+	case "outgoing":
+		condition = "l.status='pending' AND l.requested_by=$1"
+	case "blocked":
+	default:
+		return Page{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Page{}, auth.ErrUnavailable
+	}
+	defer tx.Rollback(ctx)
+	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
+		return Page{}, err
+	}
+	query := `SELECT a.id,a.pin,l.request_id,l.status FROM friend_links l JOIN auth_accounts a ON a.id=CASE WHEN l.low_id=$1 THEN l.high_id ELSE l.low_id END WHERE (l.low_id=$1 OR l.high_id=$1) AND ` + condition + ` AND a.id>$2 AND NOT EXISTS(SELECT 1 FROM friend_blocks b WHERE (b.actor_id=$1 AND b.target_id=a.id) OR (b.actor_id=a.id AND b.target_id=$1)) ORDER BY a.id LIMIT $3`
+	if kind == "blocked" {
+		query = `SELECT a.id,a.pin,''::text,'blocked'::text FROM friend_blocks b JOIN auth_accounts a ON a.id=b.target_id WHERE b.actor_id=$1 AND a.id>$2 ORDER BY a.id LIMIT $3`
+	}
+	rows, err := tx.Query(ctx, query, actor.AccountID, cursor, limit+1)
+	if err != nil {
+		return Page{}, auth.ErrUnavailable
+	}
+	defer rows.Close()
+	page := Page{Items: make([]Contact, 0, limit+1)}
+	for rows.Next() {
+		var item Contact
+		if err := rows.Scan(&item.AccountID, &item.PIN, &item.RequestID, &item.Status); err != nil {
+			return Page{}, auth.ErrUnavailable
+		}
+		page.Items = append(page.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return Page{}, auth.ErrUnavailable
+	}
+	rows.Close()
+	if len(page.Items) > limit {
+		page.NextCursor = page.Items[limit-1].AccountID
+		page.Items = page.Items[:limit]
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Page{}, auth.ErrUnavailable
+	}
+	return page, nil
 }

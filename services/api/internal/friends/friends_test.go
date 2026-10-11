@@ -193,3 +193,126 @@ func TestRepeatedAcceptanceIsIdempotentWithoutChangingItsTimestamp(t *testing.T)
 		t.Fatalf("stale decline changed accepted friendship: %v", err)
 	}
 }
+
+func TestAcceptedFriendshipAuthorizationSharesTheMutationTransaction(t *testing.T) {
+	s, pool, a := fixture(t)
+	ctx := context.Background()
+	request, err := s.Request(ctx, a[0], "BCDEFGHJ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequireAccepted(ctx, tx, a[0], "bob"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("pending friendship authorized: %v", err)
+	}
+	tx.Rollback(ctx)
+	if err := s.Respond(ctx, a[1], request.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := s.RequireAccepted(ctx, tx, a[0], "bob"); err != nil {
+		t.Fatalf("accepted transaction denied: %v", err)
+	}
+	blockedCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	err = s.Block(blockedCtx, a[1], "alice", true)
+	cancel()
+	if !errors.Is(err, auth.ErrUnavailable) {
+		t.Fatalf("block raced past authorization lock: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Block(ctx, a[1], "alice", true); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := s.RequireAccepted(ctx, tx, a[0], "bob"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("blocked friendship authorized: %v", err)
+	}
+}
+
+func TestFriendListsArePaginatedPrivateMetadataAndSeparateIncomingRequests(t *testing.T) {
+	s, _, a := fixture(t)
+	ctx := context.Background()
+	bob, err := s.Request(ctx, a[0], "BCDEFGHJ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Request(ctx, a[2], "ABCDEFGH"); err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := s.List(ctx, a[0], "incoming", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(incoming.Items) != 1 || incoming.Items[0].AccountID != "carol" {
+		t.Fatalf("incoming=%+v", incoming)
+	}
+	outgoing, err := s.List(ctx, a[0], "outgoing", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outgoing.Items) != 1 || outgoing.Items[0].RequestID != bob.ID {
+		t.Fatalf("outgoing=%+v", outgoing)
+	}
+	if err := s.Respond(ctx, a[1], bob.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	carol, err := s.Request(ctx, a[2], "ABCDEFGH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Respond(ctx, a[0], carol.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.List(ctx, a[0], "accepted", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 || first.Items[0].AccountID != "bob" || first.NextCursor != "bob" {
+		t.Fatalf("first page=%+v", first)
+	}
+	second, err := s.List(ctx, a[0], "accepted", first.NextCursor, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.Items[0].AccountID != "carol" || second.NextCursor != "" {
+		t.Fatalf("second page=%+v", second)
+	}
+	if err := s.Block(ctx, a[0], "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.List(ctx, a[0], "blocked", "", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked.Items) != 1 || blocked.Items[0].AccountID != "bob" {
+		t.Fatalf("blocked=%+v", blocked)
+	}
+	empty, err := s.List(ctx, a[1], "accepted", "", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Items == nil || len(empty.Items) != 0 {
+		t.Fatalf("empty list=%+v", empty)
+	}
+	for _, input := range []struct {
+		kind, cursor string
+		limit        int
+	}{{"unknown", "", 25}, {"accepted", "bad cursor", 25}, {"accepted", "", 101}, {"accepted", "", 0}} {
+		if _, err := s.List(ctx, a[0], input.kind, input.cursor, input.limit); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid pagination accepted: %v", err)
+		}
+	}
+}
