@@ -30,6 +30,9 @@ class AwsemchatCryptoModule : Module() {
     AsyncFunction("executeDurable") { namespace: String, input: String ->
       synchronized(lock) { durable?.execute(namespace, input) ?: "{\"ok\":false,\"code\":\"UNAVAILABLE\"}" }
     }
+    AsyncFunction("executeArchive") { input: String ->
+      synchronized(lock) { ArchiveBridge.execute(input) }
+    }
     AsyncFunction("durableProbe") { namespace: String, action: String, input: String ->
       synchronized(lock) { durable?.probe(namespace, action, input) ?: "{\"ok\":false,\"code\":\"UNAVAILABLE\"}" }
     }

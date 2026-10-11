@@ -1,0 +1,36 @@
+# Bounded native archive v1
+
+Design fixed before implementation, 2026-10-11. This Android foundation does not enable product backup or change the live durable-state owner.
+
+JCA `Cipher.getInstance("AES/GCM/NoPadding")`, 256-bit keys, 128-bit tags and native `SecureRandom.nextBytes` provide encryption and randomness. The recovery key is 32 random bytes represented as 64 hex characters for explicit save/reentry. There is no password, KDF, PIN or SMS derivation. Each encryption frame uses a fresh random 96-bit GCM nonce; one archive rejects repeated nonces. No custom cryptographic primitive or JS crypto is used. A key reused across many archives has the usual random-GCM-nonce collision bound; production archival volume/rotation policy requires review.
+
+All integers are signed Java big-endian with explicit nonnegative bounds. UTF-8 is decoded strictly. A string is a 4-byte byte length followed by UTF-8 bytes. Header is 36 bytes: ASCII `AWSEMBK1` (8), version 1 (4), suite 1 (4), random archive ID (16), record count (4). Unsupported values fail before record allocation.
+
+A frame is plaintext length (4), random nonce (12), ciphertext (plaintext length), GCM tag (16). Manifest is frame position0/type0; each record is position1..count/type1; completion is position count+1/type2. AAD is the entire header, SHA-256 of the complete encrypted manifest frame (32 zero bytes for the manifest itself), type (4), position (4), and plaintext length (4). Thus header, archive identity, manifest and position/context authenticate every chunk and completion. Changing order, duplicating a frame, changing lengths or mixing archives fails.
+
+Manifest plaintext: account string (1..128 UTF-8 bytes), history schema1 (4), total serialized record bytes (4), SHA-256 over the concatenated serialized record bytes (32). Record plaintext: event ID string, conversation ID string, audience count (4), each original audience ID string, membership interval string, received timestamp (8, 0..2^53-1), payload string. IDs/intervals are 1..128 UTF-8 bytes; audience1..20 unique IDs; payload0..32768 UTF-8 bytes. Only these six archival fields exist. No generic state/map, live sessions, tokens, pins, outbox or current membership authority is representable. Duplicate event IDs fail. Completion plaintext repeats total record bytes (4) and the records hash (32). Every frame, count, digest, schema and EOF must validate before any record is returned to staging.
+
+Limits:128 records,256KiB combined serialized records,384KiB archive,600000 input JSON characters and800000 UTF-8 input bytes. Foundation ciphertext crosses the native bridge as canonical padded base64 (max524288 characters); decoded records remain bounded. Unknown request/record fields and noninteger timestamps are rejected. This is explicitly not a streaming production/media backup API. Memory copies of recovery material/plaintext cannot all be reliably erased across JVM/JS.
+
+Account binding is compared to the expected authenticated account supplied by the future auth layer; the codec does not establish server OTP authentication. SMS-only replacement account access is the user's selected policy. History recovery independently requires the archive key, and SMS-only access does not protect against phone-number reassignment.
+
+Sources consulted before implementation: [Android Cipher](https://developer.android.com/reference/javax/crypto/Cipher) (`updateAAD` before ciphertext, GCM nonce uniqueness and authentication at `doFinal`), [SecureRandom](https://developer.android.com/reference/java/security/SecureRandom), [GCMParameterSpec](https://developer.android.com/reference/javax/crypto/spec/GCMParameterSpec), [Expo SDK57](https://docs.expo.dev/versions/v57.0.0/) and [Expo module API](https://docs.expo.dev/modules/module-api/). Existing installed SDK57 history uses native SQLite4.7 SQLCipher via Expo and device SecureStore journals. Crypto provider identity is reported only as sanitized native test evidence.
+
+## Native evidence, 2026-10-11
+
+The controller continued inline with Test-Driven Development after the user stopped subagent delegation. Storage snapshot test first failed `snapshotForArchive is not a function`, then passed after the minimal all-conversation query. The Android integration probe first emitted `BACKUP_BRIDGE_MISSING`; after implementing the bridge and rebuilding, PID24614 emitted PASS for native archive roundtrip, wrong account/key/tamper/truncation rejection, prior-history preservation, archival boundaries and SQLCipher generation switch. No product navigation links to `/native-backup-probe`; its work is guarded by `__DEV__` and synthetic fixtures.
+
+Actual process-stop evidence: before-switch checkpoint PID24793, process confirmed absent, recovery PID24922 selected prior history; after-switch checkpoint PID25104, process absent, recovery PID25261 selected fully restored history; after-confirm checkpoint PID25388, process absent, recovery PID25529 selected restored history. Every recovery ran `confirmStartup` successfully. These are Android `am force-stop` tests between completed checkpoints, not power loss or interruption inside a SecureStore write. The before-switch checkpoint occurs during archive-completion verification before the active journal changes; no test-only hook was added to the production history owner.
+
+Host Java JCA tests exercise the same codec: correct records, wrong account/key, bit flip at every byte, truncation at every byte, trailing input, duplicate IDs, audience duplication, invalid timestamp, capacity, reordered/duplicated frames, empty archive, Unicode and invalid UTF-16. Mobile suite18/18 and Rust23/23 pass; typecheck and Expo lint exit0. Existing Node experimental SQLite/module-type warnings and Gradle10 deprecation summary remain classified baseline toolchain warnings. The initial ARM64 build succeeded32s; final build/refactored codec evidence is recorded in the implementation report.
+
+Reproduce host codec from repository root:
+
+```sh
+javac -d /private/tmp/awsem-backup-host apps/mobile/modules/awsemchat-crypto/android/src/main/java/expo/modules/awsemchatcrypto/ArchiveCodec.java validation/backup/host/ArchiveCodecTest.java
+java -cp /private/tmp/awsem-backup-host expo.modules.awsemchatcrypto.ArchiveCodecTest
+```
+
+Build/install the ARM64 development APK, connect Metro8081, then launch `awsemchat://native-backup-probe?phase=full`. Sanitized log tag: `AWSEM_NATIVE_BACKUP_PROBE`. Process pairs are `before/recoverBefore`, `after/recoverAfter`, `confirmed/recoverConfirmed`; wait for CHECKPOINT, force-stop, confirm PID absent, then launch recovery. Each fixed pair is one-shot because retained fixture IDs deliberately reject duplicate writes; use fresh synthetic namespaces for repeat runs rather than deleting unrelated user data.
+
+Remaining gates: production account authentication, complete history/media/sticker aggregation, recovery-key save UX, secure local destination, Drive OAuth/upload/revocation, full-disk handling, orphan generation cleanup, media size/streaming format, physical devices/iOS, and final format/security review. Account authentication is a future caller precondition. This foundation does not authorize any restored membership or live session, and does not activate product backup.

@@ -151,6 +151,11 @@ export async function openEncryptedHistory(namespace: string) {
         'SELECT * FROM history WHERE conversationId = ? ORDER BY receivedAt, eventId', conversationId);
       return rows.map((row) => ({ ...row, originalAudience: JSON.parse(row.originalAudience) as string[] }));
     }),
+    snapshotForArchive: () => serial(async () => {
+      const rows = await db.getAllAsync<Omit<HistoryRecord, 'originalAudience'> & { originalAudience: string }>(
+        'SELECT * FROM history ORDER BY receivedAt, eventId');
+      return rows.map((row) => ({ ...row, originalAudience: JSON.parse(row.originalAudience) as string[] }));
+    }),
     checkIntegrity: () => serial(() => integrity(db)),
     cipherVersion: () => serial(async () => {
       const row = await db.getFirstAsync<{ cipher_version: string }>('PRAGMA cipher_version');

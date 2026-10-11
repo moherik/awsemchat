@@ -1,6 +1,6 @@
 # Encrypted backup contract and native gate
 
-Date: 2026-10-10. Status: proposed format; export/import implementation and device SQLCipher validation **not run**. No host AES test is presented as native SQLite proof.
+Contract date: 2026-10-10; evidence updated2026-10-11. Status: bounded native archive and SQLCipher staged restore validated; production backup/Drive integration remains gated. See [current archive format and native evidence](archive-v1.md). The proposed streaming format below is not the implemented bounded format. No host AES test is presented as native SQLite proof.
 
 ## Proposed archive v1
 
@@ -69,3 +69,7 @@ The controller's subsequent ARM64 build, `./gradlew assembleDebug --no-daemon -P
 The development app's default `10.0.2.2` Metro connection failed. The controller configured only this app's debug SharedPreferences `debug_http_host=localhost:8081`, with ADB reverse using the same port8081. Metro8081 loaded 1,936 Android modules in 10.127s. From fresh app PID5572, the synthetic runner emitted `AWSEM_NATIVE_STORAGE_PROBE` START followed by PASS, reporting `cipherVersion: "4.7.0 community"` and fixed checks `INTEGRITY`, `REOPEN`, `WRONG_KEY`, `ROLLBACK`, `FAILED_IMPORT`, `GENERATION_SWITCH`. Controller log artifact: `/private/tmp/awsemchat-native-metro-8081.log`.
 
 This is actual Android emulator evidence for the runnable SQLCipher storage harness. `REOPEN` closes and reopens database connections; it is not a process-kill, physical crash or power-loss test. PASS does not validate backup archive encryption/account binding/chunks, full-disk recovery, OS backup exclusions, native E2E crypto/identity authentication, real-device security or provider integration. Those gates remain pending; no full E2E or production-readiness claim follows from this result.
+
+### Bounded native encrypted archive continuation (2026-10-11)
+
+The earlier proposed-format and pending statements describe historical gates. A real bounded Android archive codec and SQLCipher staged restore now exist; see [format and native evidence](archive-v1.md). Roundtrip/authentication-failure preservation and actual process-stop recovery at completed switch/confirmation checkpoints passed. This is not full Drive/local-export product backup, full-disk or hardware power-loss proof; those gates remain. The implementation uses random recovery-key AES-GCM frames with authenticated manifest/completion, not the earlier unimplemented derived-key streaming proposal.

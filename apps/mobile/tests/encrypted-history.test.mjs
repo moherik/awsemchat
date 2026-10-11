@@ -197,3 +197,12 @@ test('wrong-key evidence excludes open and cipher failures at either connection'
 });
 
 test.after(() => { rmSync(directory, { recursive: true, force: true }); });
+
+test('backup snapshot includes all conversations with their original audiences', async () => {
+  const store = await openEncryptedHistory('backup-snapshot');
+  const other = { ...record, eventId: 'other', conversationId: 'circle', originalAudience: ['alice'], receivedAt: record.receivedAt + 1 };
+  try {
+    await store.append([other, record]);
+    assert.deepEqual(await store.snapshotForArchive(), [record, other]);
+  } finally { await store.close(); }
+});

@@ -74,12 +74,12 @@ Proposed states: local queued/sending → server accepted (sent) → each origin
 
 ## Product decisions requiring owner confirmation
 
-These are proposals, not approved changes. Controller should obtain decisions before affected slices.
+Rows marked approved record user decisions. Other rows remain proposals requiring decisions before the affected slices.
 
 | Topic | Concrete proposal | Consequence / pending choice |
 | --- | --- | --- |
 | PIN | Random nonsequential 8-character human-readable code, exclude ambiguous characters; explicit rotate, invalidate old lookup immediately, preserve existing friendship | Format, lookup rate limits and rotation UX need approval; PIN never authenticates or unlocks backup |
-| Reassigned number | SMS grants new-device login only after existing account recovery factor or approval from current phone; lost-factor flow cannot decrypt/claim prior history | Decide account continuity versus fresh account after reassignment; SMS alone must not silently give old social identity to a new owner |
+| Reassigned number | Approved 2026-10-11: SMS alone restores account access; replacement revokes the previous phone and creates fresh live keys. Historical backup still requires its separate recovery key. | This policy accepts reassigned-number account/social-identity takeover risk; SMS does not decrypt old history. Do not require old-phone approval or an account recovery factor. |
 | Admin succession | Last admin must nominate an accepted current member before leaving; deletion/disappearance handled by explicit recovery policy | Deterministic automatic successor versus mandatory transfer needs approval |
 | Rejoin | Fresh membership interval, no content from absence, prior locally held history retained | Privacy rule derives from spec; retention presentation needs confirmation |
 | Deletion | Author sends tombstone; remove server ciphertext/object access and local quote snapshots when received; no recall of exported/downloaded copies | Decide tombstone text, offline retention, backup deletion policy and whether historic quotes are retained |

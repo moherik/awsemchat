@@ -28,7 +28,8 @@ Voice/video calls, public feeds, public groups, online/last-seen indicators, typ
 - Adding a PIN sends a friend request. Messages and PINGs are unavailable until the recipient accepts.
 - Friends can unfriend, block, and report. Blocking stops private messages, PINGs, and new invitations.
 - A replacement-phone login revokes the previous phone's server session. Revocation prevents future server access; it cannot erase content already downloaded on that phone.
-- PIN format, rotation policy, verification provider, account-deletion flow, and protection against phone-number reassignment require resolution before implementing identity.
+- Approved 2026-10-11: SMS alone restores account access on a replacement phone. Old-phone approval is not required. Encrypted history requires its independent backup recovery key; the account policy accepts phone-number reassignment risk.
+- PIN format, rotation policy, verification provider and account-deletion flow require resolution before implementing identity. Replacement-phone access follows the approved SMS-only policy above.
 
 ## 4. Navigation
 
