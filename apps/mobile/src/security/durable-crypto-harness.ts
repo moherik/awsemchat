@@ -15,6 +15,12 @@ async function control(namespace: string, action: string, input = '') {
 export async function runDurableCryptoHarness(phase: string) {
   if (!__DEV__) throw new Error('UNAVAILABLE');
   const [a, b, c] = names.map(durableEncryption);
+  if (phase === 'pinResume') {
+    assert((await a.peer('capacity-peer')).historyExhausted);
+    await rejected(() => a.retry('capacity-operation'), 'IDENTITY_CHANGED');
+    await rejected(() => a.send({ ...input, operation: 'capacity-new', recipients: ['capacity-peer'] }), 'IDENTITY_CHANGED');
+    return ['PIN_CAPACITY_QUARANTINE_PROCESS_RESTART'];
+  }
   if (phase === 'recoverBefore') {
     await rejected(() => a.retry('one'), 'UNKNOWN_OPERATION');
     const bytes = await a.send(input); const wire: DurableEnvelope = JSON.parse(bytes);
@@ -81,6 +87,22 @@ export async function runDurableCryptoHarness(phase: string) {
   await a.acknowledgePeer('bob', keys(cb)); await rejected(() => a.retry('one'), 'IDENTITY_CHANGED');
   await a.outbound('bob', cb.prekey);
   await a.send({ ...input, operation: 'two' });
+  await a.observePeer('bob', keys(bb)); await a.acknowledgePeer('bob', keys(bb));
+  await rejected(() => a.retry('one'), 'IDENTITY_CHANGED');
+  await a.observePeer('capacity-peer', keys(bb));
+  for (let i = 0; i < 15; i++) {
+    const changed = keys(i % 2 === 0 ? cb : bb);
+    await a.observePeer('capacity-peer', changed); await a.acknowledgePeer('capacity-peer', changed);
+  }
+  await a.outbound('capacity-peer', cb.prekey);
+  await a.send({ ...input, operation: 'capacity-operation', recipients: ['capacity-peer'] });
+  await a.verifyPeer('capacity-peer', keys(cb));
+  const exhausted = await a.observePeer('capacity-peer', keys(bb));
+  assert(exhausted.historyExhausted && !exhausted.verified && exhausted.observed.length === 16);
+  await rejected(() => a.retry('capacity-operation'), 'IDENTITY_CHANGED');
+  await rejected(() => a.send({ ...input, operation: 'capacity-new', recipients: ['capacity-peer'] }), 'IDENTITY_CHANGED');
+  await rejected(() => a.acknowledgePeer('capacity-peer', keys(bb)), 'IDENTITY_CHANGED');
+  assert((await a.observePeer('capacity-peer', keys(cb))).historyExhausted);
   for (const action of ['corrupt', 'wrongKey', 'deleteKey', 'deleteRow', 'wrongVersion']) {
     const name = names[3]; await control(name, 'reset');
     const fault = durableEncryption(name); await fault.initialize();
@@ -89,5 +111,5 @@ export async function runDurableCryptoHarness(phase: string) {
     await rejected(() => fault.initialize(), 'ALREADY_EXISTS');
   }
   return ['ROLLBACK_OUTBOX', 'COMMIT_LOST_REPLY', 'EXACT_RETRY_REOPEN', 'ATOMIC_RECEIVE_REPLAY_HISTORY',
-    'DURABLE_BIDIRECTIONAL', 'IMMUTABLE_AUDIENCE', 'HISTORY_ONLY_RESTORE', 'PIN_CHANGE_QUARANTINE', 'CORRUPT_SEAL', 'WRONG_KEY', 'KEY_LOSS', 'MISSING_ROW', 'FORMAT_VERSION'];
+    'DURABLE_BIDIRECTIONAL', 'IMMUTABLE_AUDIENCE', 'HISTORY_ONLY_RESTORE', 'PIN_CHANGE_QUARANTINE', 'IDENTITY_ROUND_TRIP', 'PIN_CAPACITY_QUARANTINE', 'CORRUPT_SEAL', 'WRONG_KEY', 'KEY_LOSS', 'MISSING_ROW', 'FORMAT_VERSION'];
 }

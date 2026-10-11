@@ -83,6 +83,8 @@ impl Keys {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pin {
+    #[serde(default, rename = "historyExhausted")]
+    history_exhausted: bool,
     current: Keys,
     pending: Option<Keys>,
     observed: Vec<Keys>,
@@ -198,7 +200,7 @@ impl State {
     fn pin(&self, peer: &str) -> Result<&Pin> {
         id(peer)?;
         let p = self.peers.get(peer).ok_or("UNKNOWN_PEER")?;
-        if p.pending.is_some() {
+        if p.history_exhausted || p.pending.is_some() {
             return Err("IDENTITY_CHANGED");
         }
         Ok(p)
@@ -220,13 +222,18 @@ impl State {
                 id(&peer)?;
                 keys.validate()?;
                 if let Some(pin) = self.peers.get_mut(&peer) {
-                    if keys != pin.current && pin.pending.as_ref() != Some(&keys) {
-                        if pin.observed.len() >= 16 {
-                            return Err("CAPACITY");
-                        }
-                        pin.observed.push(keys.clone());
-                        pin.pending = Some(keys);
+                    if !pin.history_exhausted
+                        && keys != pin.current
+                        && pin.pending.as_ref() != Some(&keys)
+                    {
                         pin.verified = false;
+                        if pin.observed.len() >= 16 {
+                            // Return a committed terminal status: an error would discard quarantine.
+                            pin.history_exhausted = true;
+                        } else {
+                            pin.observed.push(keys.clone());
+                            pin.pending = Some(keys);
+                        }
                     }
                 } else {
                     if self.peers.len() >= MAX_PEERS {
@@ -235,6 +242,7 @@ impl State {
                     self.peers.insert(
                         peer.clone(),
                         Pin {
+                            history_exhausted: false,
                             current: keys.clone(),
                             pending: None,
                             observed: vec![keys],
@@ -253,7 +261,7 @@ impl State {
                 id(&peer)?;
                 keys.validate()?;
                 let pin = self.peers.get_mut(&peer).ok_or("UNKNOWN_PEER")?;
-                if pin.pending.as_ref() != Some(&keys) {
+                if pin.history_exhausted || pin.pending.as_ref() != Some(&keys) {
                     return Err("IDENTITY_CHANGED");
                 }
                 pin.current = keys;

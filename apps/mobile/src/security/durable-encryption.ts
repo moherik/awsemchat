@@ -2,7 +2,7 @@ import { nativeCrypto } from '../../modules/awsemchat-crypto/src/AwsemchatCrypto
 import type { Ciphertext, PublicBundle } from './encryption-adapter';
 
 export type PeerKeys = Pick<PublicBundle, 'identity' | 'signingIdentity'>;
-export type PeerPin = { current: PeerKeys; pending: PeerKeys | null; observed: PeerKeys[]; verified: boolean; revision: number };
+export type PeerPin = { historyExhausted: boolean; current: PeerKeys; pending: PeerKeys | null; observed: PeerKeys[]; verified: boolean; revision: number };
 export type DurableHistory = { operation: string; conversation: string; audience: string; sender: PeerKeys; plaintext: string; archival: boolean };
 export type DurableEnvelope = { version: 1; operation: string; conversation: string; audience: string; sender: PeerKeys;
   recipients: { peer: string; keys: PeerKeys; message: Ciphertext }[] };

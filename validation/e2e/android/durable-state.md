@@ -11,7 +11,7 @@ One native SQLite owner holds a single sealed snapshot per local account namespa
 3. Seal the entire candidate with fresh IV; update the BLOB; commit SQLite with synchronous FULL. Only after endTransaction confirms success may the public result cross JS. Any error discards the candidate and no ciphertext/plaintext result escapes. No live ratchet survives a call.
 4. After restart or an ambiguous return, reload committed authority. Either old state is intact and unexposed encryption may safely be retried, or new state plus exact ciphertext is committed and retries return those bytes. Never reuse committed operation IDs for other payloads. SQLite journal recovery owns torn/interrupted transaction recovery, with no fallback to older valid snapshots on authentication error.
 
-Peer pins use TOFU. Observing different encryption OR signing keys records a pending change and resets manual verification. Sends and outbox retries for that peer are blocked. Acknowledgment must repeat the exact pending keys and retires the old active session; old operations retain old recipient keys and remain quarantined after acknowledgment. New operation IDs and new sessions are required. Future transport must revalidate through retry at send admission instead of blindly sending previously cached bytes; no transport is connected in this slice. Optional verification must identify the exact current keys and cannot clear an unacknowledged change.
+Peer pins use TOFU. Observing different encryption OR signing keys records a pending change and resets manual verification. Sends and outbox retries for that peer are blocked. Acknowledgment must repeat the exact pending keys and retires the old active session; old operations retain old recipient keys and remain quarantined after acknowledgment. New operation IDs and new sessions are required. If the next changed-key observation exceeds the16-entry pin history, it commits `historyExhausted: true` and clears verification, returning that terminal pin status rather than throwing CAPACITY (which would discard the quarantine). All sends, retries, verification and acknowledgment remain blocked for that peer, including after restart and later observations. Existing history is retained without appending an unbounded key; recovery policy remains a production gate. Old snapshots default the new flag to false. Future transport must revalidate through retry at send admission instead of blindly sending previously cached bytes; no transport is connected in this slice. Optional verification must identify the exact current keys and cannot clear an unacknowledged change.
 
 History export/import has a strict records-only schema, no generic state import. Imports are quarantined archival records and never hydrate peers, live account/session keys, auth, replay authority or outbox. Authentication/account binding of a backup remains the external backup gate. Native receive history is canonical within this foundation; integration with production history/SQLCipher requires a deliberate single-owner migration, not dual writes.
 
@@ -73,3 +73,37 @@ Primary sources: pinned local `vodozemac-0.11.1/src/olm/account/mod.rs` (pickle 
 ```
 
 Host result: 11 tests passed (7 durable,4 original adapter); cleanup regression1/1 passed. Typecheck and Expo lint exited0. Node emitted the existing module-type warning for stripping TypeScript; Gradle emitted its deprecation summary. No warning was treated as proof of correctness.
+
+
+## Review round1: pin-history exhaustion
+
+The next identity observation after initial pin plus15 acknowledged changes previously threw CAPACITY before changing the pin. Because errors discard candidates, that left the old peer usable. The regression failed with CAPACITY before the fix. The observation now returns the terminal `historyExhausted` status only after the existing sealed commit path succeeds, with verification cleared. Existing16 history entries remain bounded. New sends, committed retries, verification and acknowledgment all reject; later observations cannot reopen the peer. The new flag defaults false for prior snapshots. A separate A→B→A regression now explicitly proves that the original A operation remains quarantined after A is acknowledged again, while a new operation can use the new revision.
+
+Host13/13 passed (9 durable+4 adapter). The cleanup regression passed1/1 without warnings after its test-only resolver declared just that imported source as `module-typescript`; application module settings are unchanged. Typecheck/Expo lint exited0. ARM64 incremental build with `--warning-mode all`:16s,385 tasks (28 executed). Remaining warnings are baseline Gradle10 deprecations: legacy Usage attributes in the React Native Gradle plugin, multi-string dependencies in Android tooling, and Groovy property-assignment syntax in generated Expo project files, existing native-module scaffold (`namespace`, `abortOnError`) and installed dependencies. These files/toolchain choices were not changed in this fix; no Rust or Kotlin compiler warning was introduced.
+
+Final native full probe and actual process boundaries, including new terminal-quarantine restart evidence:
+
+```text
+{"phase": "full", "pid": "13860"}
+10-11 06:26:54.867 13860 13969 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:26:56.755 13860 13969 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["ROLLBACK_OUTBOX","COMMIT_LOST_REPLY","EXACT_RETRY_REOPEN","ATOMIC_RECEIVE_REPLAY_HISTORY","DURABLE_BIDIRECTIONAL","IMMUTABLE_AUDIENCE","HISTORY_ONLY_RESTORE","PIN_CHANGE_QUARANTINE","IDENTITY_ROUND_TRIP","PIN_CAPACITY_QUARANTINE","CORRUPT_SEAL","WRONG_KEY","KEY_LOSS","MISSING_ROW","FORMAT_VERSION"]}'
+{"phase": "pinResume", "pid": "14078"}
+10-11 06:27:01.994 14078 14127 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:27:02.463 14078 14127 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["PIN_CAPACITY_QUARANTINE_PROCESS_RESTART"]}'
+{"phase": "seed", "pid": "14203"}
+10-11 06:27:07.747 14203 14249 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:27:08.821 14203 14249 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["RESTART_SEED_COMMITTED"]}'
+{"phase": "resume", "pid": "14344"}
+10-11 06:27:13.779 14344 14390 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:27:14.055 14344 14390 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["PROCESS_RESTART_EXACT_RETRY","PROCESS_RESTART_IDENTITY","PROCESS_RESTART_REPLAY_HISTORY"]}'
+{"phase": "crashBefore", "processDead": true}
+{"phase": "recoverBefore", "pid": "14588"}
+10-11 06:27:23.090 14588 14634 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:27:23.353 14588 14634 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["PROCESS_DEATH_BEFORE_COMMIT_ROLLBACK","RECOVERED_SEND_RECEIVE"]}'
+{"phase": "crashAfter", "processDead": true}
+{"phase": "recoverAfter", "pid": "14805"}
+10-11 06:27:32.388 14805 14845 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"START","synthetic":true}'
+10-11 06:27:32.592 14805 14845 I ReactNativeJS: 'AWSEM_DURABLE_CRYPTO_PROBE', '{"status":"PASS","synthetic":true,"checks":["PROCESS_DEATH_AFTER_COMMIT_RECOVERY","COMMITTED_RATCHET_CIPHERTEXT","PRIOR_CIPHERTEXT_UNCHANGED"]}'
+```
+
+For the new restart check, run phase `full`, force-stop, then run phase `pinResume` before any fixture-resetting phase. This verifies durable terminal quarantine in a different process; the later seed/resume and before/after-commit process-death tests remain separate.

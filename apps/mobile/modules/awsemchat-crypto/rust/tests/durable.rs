@@ -188,3 +188,55 @@ fn durable_bidirectional_ratchet_and_event_binding() {
     assert!(a.call(incoming)["plaintext"] == "synthetic");
     assert!(a.call(send()) == bytes);
 }
+
+fn peer_keys(bundle: &Value) -> Value {
+    json!({"identity":bundle["identity"],"signingIdentity":bundle["signingIdentity"]})
+}
+fn acknowledge(s: &mut Store, bundle: &Value) {
+    s.call(json!({"op":"acknowledgePeer","peer":"bob","keys":peer_keys(bundle)}));
+}
+#[test]
+fn exhausted_pin_history_commits_terminal_quarantine() {
+    let (mut a, _, _, original) = pair();
+    let (_, replacement) = init();
+    for i in 0..15 {
+        let keys = if i % 2 == 0 { &replacement } else { &original };
+        pin(&mut a, "bob", keys);
+        acknowledge(&mut a, keys);
+    }
+    a.call(json!({"op":"outbound","peer":"bob","prekey":replacement["prekey"]}));
+    a.call(send());
+    a.call(json!({"op":"verifyPeer","peer":"bob","keys":peer_keys(&replacement)}));
+    let observed = a.call(json!({"op":"observePeer","peer":"bob","keys":peer_keys(&original)}));
+    assert_eq!(observed["historyExhausted"], true);
+    assert_eq!(observed["verified"], false);
+    assert_eq!(observed["observed"].as_array().unwrap().len(), 16);
+    a = Store(a.0.clone());
+    a.rejects(json!({"op":"retry","operation":"one"}), "IDENTITY_CHANGED");
+    let mut fresh = send();
+    fresh["operation"] = json!("new");
+    a.rejects(fresh, "IDENTITY_CHANGED");
+    a.rejects(
+        json!({"op":"acknowledgePeer","peer":"bob","keys":peer_keys(&original)}),
+        "IDENTITY_CHANGED",
+    );
+    pin(&mut a, "bob", &replacement);
+    a.rejects(send(), "IDENTITY_CHANGED");
+}
+#[test]
+fn returning_to_original_identity_does_not_release_original_outbox() {
+    let (mut a, _, _, original) = pair();
+    a.call(send());
+    let (_, replacement) = init();
+    pin(&mut a, "bob", &replacement);
+    acknowledge(&mut a, &replacement);
+    pin(&mut a, "bob", &original);
+    acknowledge(&mut a, &original);
+    a = Store(a.0.clone());
+    a.rejects(json!({"op":"retry","operation":"one"}), "IDENTITY_CHANGED");
+    a.call(json!({"op":"outbound","peer":"bob","prekey":original["prekey"]}));
+    let mut fresh = send();
+    fresh["operation"] = json!("new");
+    a.call(fresh);
+    a.rejects(send(), "IDENTITY_CHANGED");
+}
