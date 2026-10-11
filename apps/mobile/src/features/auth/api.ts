@@ -19,6 +19,14 @@ function identity(value: unknown): SessionIdentity {
   if (!identifier(data.accountId) || !identifier(data.deviceId) || !generationValid(data.generation) || !expiryValid(data.expiresAt)) throw new AuthError('INVALID_RESPONSE');
   return { accountId: data.accountId, deviceId: data.deviceId, generation: data.generation, expiresAt: data.expiresAt };
 }
+export function parseSession(value: unknown, deviceId: string): Session {
+  const data = object(value);
+  const account = object(data.account);
+  if (!tokenValid(data.accessToken) || !identifier(account.id) || typeof account.pin !== 'string' || !/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(account.pin)) throw new AuthError('INVALID_RESPONSE');
+  const validated = identity({ accountId: account.id, deviceId: data.deviceId, generation: data.generation, expiresAt: data.expiresAt });
+  if (validated.deviceId !== deviceId) throw new AuthError('INVALID_RESPONSE');
+  return { accessToken: data.accessToken, account: { id: account.id, pin: account.pin }, deviceId: validated.deviceId, generation: validated.generation, expiresAt: validated.expiresAt };
+}
 export function createAuthAPI(baseURL: string, development = false) {
   let url: URL;
   try { url = new URL(baseURL); } catch { throw new AuthError('CONFIGURATION'); }
@@ -52,12 +60,7 @@ export function createAuthAPI(baseURL: string, development = false) {
       return { challengeId: data.challengeId, expiresAt: data.expiresAt, ...(data.status === 'pending' ? { status: 'pending' } : {}) };
     },
     async verify(challengeId: string, code: string, deviceId: string): Promise<Session> {
-      const data = object(await request('/v1/auth/verify', 'POST', { challengeId, code, deviceId }));
-      const account = object(data.account);
-      if (!tokenValid(data.accessToken) || !identifier(account.id) || typeof account.pin !== 'string' || !/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(account.pin)) throw new AuthError('INVALID_RESPONSE');
-      const validated = identity({ accountId: account.id, deviceId: data.deviceId, generation: data.generation, expiresAt: data.expiresAt });
-      if (validated.deviceId !== deviceId) throw new AuthError('INVALID_RESPONSE');
-      return { accessToken: data.accessToken, account: { id: account.id, pin: account.pin }, deviceId: validated.deviceId, generation: validated.generation, expiresAt: validated.expiresAt };
+      return parseSession(await request('/v1/auth/verify', 'POST', { challengeId, code, deviceId }), deviceId);
     },
     async session(token: string): Promise<SessionIdentity> {
       if (!tokenValid(token)) throw new AuthError('SESSION_REVOKED');
