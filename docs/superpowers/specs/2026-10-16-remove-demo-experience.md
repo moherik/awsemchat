@@ -1,61 +1,61 @@
-# Remove the Demo Experience
+# Remove Web and Demo Support
 
-**Status:** Draft for review  
+**Status:** Revised draft for review  
 **Date:** 2026-10-16
 
 ## Goal
 
-AwsemChat should open as the real mobile application on Android, using the existing authenticated production screens and services. The web build is not a sample application or a second product surface. Remove its demo conversations, sample accounts, and simulated actions so nobody can mistake local sample data for real AwsemChat data.
+AwsemChat is a mobile app for Android and iOS. Remove browser support and the demo experience entirely so nobody can mistake local sample data for real AwsemChat data. The supported products are the native Android and iOS apps, using the existing production screens and services.
 
-Keep the production native routes and their current behavior. When someone opens AwsemChat in a web browser, show a small, deliberate page explaining that AwsemChat is available in the mobile app. That page must not load production native modules or initialize sample data.
+Keep the production native routes and their current behavior. Do not provide a browser app, web fallback screen, or web demo.
 
 ## Current evidence
 
-- Android already selects the production home and chat screens, while web selects `DemoChatApp` from `src/app/index.tsx` and `src/app/chat.tsx`.
+- Android and iOS already select the production home and chat screens, while web selects `DemoChatApp` from `src/app/index.tsx` and `src/app/chat.tsx`.
 - The `/flow` route selects `NativeFlows` on native platforms but renders `DemoFlows` on web. The sticker route likewise contains a demo-backed web implementation.
 - Demo state is centralized in `features/demo-store.ts`; sample conversations and identities are in `features/sample-data.ts`. Demo-only consumers include the old chat app, demo flows, GIF and sticker pickers, and web palette preference.
 - A successful Android export currently contains the demo chat, demo flows, sample data, demo store, and web-oriented picker/viewer modules in its source map, even though Android chooses native screens at runtime.
-- A web export currently fails while resolving the SQLite web WASM dependency pulled in by a production chat dependency. Platform-specific route modules can prevent web from importing those native modules.
+- The Expo app config contains web output settings, the mobile package has a `web` start script and web runtime packages, and the default platform set can include web when `react-dom` is installed.
 
 ## Design
 
-### Route ownership
+### Native route ownership
 
-- Keep Expo Router's generic route files so existing paths and deep links remain stable.
-- Move platform selection behind platform-resolved feature modules outside the route directory. Native modules own `/`, `/chat`, `/flow`, and `/stickers` and render the existing production screens. Web modules for those paths render the same lightweight unsupported-platform page.
-- The web page gives a clear next step to use the Android or iOS app. It does not expose demo data, mock sign-in, fake SMS, or simulated messaging controls.
-- Keep the existing native route parameters and navigation behavior, including private chat, Circle, flow, and sticker maker links.
+- Keep Expo Router route files and existing paths/deep links for Android and iOS.
+- Route `/`, `/chat`, `/flow`, and `/stickers` directly to the existing production screens. Remove platform checks whose only purpose is choosing demo UI.
+- Preserve existing native route parameters and navigation behavior, including private chat, Circle, account flows, and sticker maker links.
+- Explicitly configure Expo to support only `ios` and `android`. Remove web-only app config, the `web` start/preview workflow, and web runtime packages that are not used by native features. Expo SDK 57 documents that supported platforms can be set explicitly and that `react-dom` otherwise adds web by default ([Expo app config](https://docs.expo.dev/versions/v57.0.0/config/app/)).
+- Remove web-specific modules and branches, including web-only palette preference, web demo pickers, and the browser demo route behavior. Do not replace them with an unsupported-platform page.
 
 ### Demo removal
 
 - Remove the demo chat app, demo flow implementation, in-memory demo store, sample conversation data, and demo-only web pickers/viewers once their remaining imports are removed.
 - Remove demo-only UI branches and exports from shared features. Keep shared production components only when a native route still uses them.
 - Remove tests that assert the deleted demo behavior. Keep and extend native production tests; do not weaken production behavior or coverage to make deletion easier.
-- Remove any demo-specific package scripts or documentation that imply the sample app remains a supported product surface.
+- Remove the web demo preview script and demo-specific documentation. Preserve the existing mobile test suite; rename any misleading test command such as `test:demo` rather than deleting tests that cover production behavior.
 
 ### Production behavior and boundaries
 
 - Do not change API contracts, encryption, persistence, message delivery, Circle behavior, media handling, or authentication as part of this work.
-- Do not introduce a web client or backend connection for the browser page.
-- Android is the primary verification target. Existing native iOS resolution should continue to compile through the same production screens.
+- Android and iOS are the only supported platforms. Verify both platform bundles; do not require or generate a web export.
 - This change does not claim that backend services, Google Drive, Supabase, or SMS credentials are configured; their existing runtime gates remain authoritative.
 
 ## Acceptance criteria
 
 1. Android opens the production home, chat, flow, and sticker screens with no demo route selection.
-2. An Android export succeeds, and its source map contains none of the removed demo implementation modules or sample data.
-3. A web export succeeds and renders only the unsupported-platform page for app routes; it does not bundle the demo store, sample data, production native messaging screen, or native SQLite/GIF dependencies.
+2. Android and iOS exports succeed, and their source maps contain none of the removed demo implementation modules or sample data.
+3. Expo's resolved configuration and project scripts expose only Android and iOS; no web export target, web preview script, web runtime package, or web-only app surface remains.
 4. Existing native route paths and route parameters continue to work for home, private chat, Circle chat, account flows, and sticker management/maker.
-5. No production test is deleted or reduced merely because a demo counterpart is removed. Obsolete demo tests are replaced, where needed, by route-boundary or bundle-content regression tests.
-6. The mobile unit/UI suite, TypeScript check, Expo lint, Android export, web export, and Android native build pass.
+5. No production test is deleted or reduced merely because a demo counterpart is removed. The general mobile test suite remains runnable under a name that does not imply it only tests demo code.
+6. The mobile unit/UI suite, TypeScript check, Expo lint, Android/iOS exports, and Android native build pass. Run an iOS native build when the available Xcode toolchain permits it.
 
 ## Risks and responses
 
 - **A route may still reach a demo helper through a shared component.** Use dependency/bundle checks to find residual imports, then split or remove the demo branch at the shared boundary.
-- **A platform-specific route may break direct links on web.** Preserve generic Expo Router route files and route parameters; make only their imported surface platform-specific.
-- **A browser page could accidentally import native dependencies.** Keep the web entry module independent and make web export part of the acceptance checks.
+- **Removing web dependencies could expose a native feature that accidentally imports them.** Audit resolved imports and keep dependencies used by native features, even if their names mention web (for example, a native browser/auth module).
+- **Expo could continue treating web as supported through defaults.** Set the app's supported platform list explicitly and remove packages that activate default web support.
 - **Demo tests may contain useful behavior coverage.** Preserve equivalent tests for production behavior before deleting demo-only test files.
 
 ## Verification evidence to record
 
-Record the exact commands and results for the mobile tests, TypeScript, lint, Android export/source-map audit, web export, and Android native build. Also record a concise source-map check showing that demo modules and native-only modules are absent from their respective platform bundles.
+Record the exact commands and results for the mobile tests, TypeScript, lint, Android and iOS export/source-map audits, and Android native build. Also record a concise source-map check showing that demo modules are absent from both native bundles and that web is not among the configured platforms.
