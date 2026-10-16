@@ -8,4 +8,3 @@ target/
 *.jks
 *.keystore
 .DS_Store
-.codegraph
