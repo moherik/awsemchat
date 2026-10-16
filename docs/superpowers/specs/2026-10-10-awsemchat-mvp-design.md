@@ -3,6 +3,8 @@
 Date: 2026-10-10
 Status: MVP product specification; UI baseline approved on 2026-10-10. Production integration remains outstanding.
 
+Backend amendment (2026-10-16): the architecture table in section 13 now names Elixir/Phoenix instead of Go, and the E2E protocol is selected as vodozemac (Olm/Megolm). See the [Phoenix chat backend plan](../plans/2026-10-16-phoenix-chat-backend.md) for the decision record. Product scope, privacy, and security requirements below are unchanged.
+
 UI amendments and backend data requirements: [Approved UI baseline and backend handoff](../../technical/ui-backend-handoff.md). This addendum supersedes earlier presentation proposals; privacy/security requirements below still apply.
 
 ## 1. Purpose and success
@@ -139,18 +141,18 @@ Reporting does not imply routine server access to plaintext. Operational review 
 | --- | --- |
 | Mobile UI and application | Expo + React Native; Android first |
 | Local history and offline state | SQLite on the phone, with encryption at rest |
-| Backend | Go |
+| Backend | Elixir/Phoenix (amended 2026-10-16, was Go) |
 | Backend database | PostgreSQL hosted by the user on a VPS |
 | Encrypted media objects | Supabase Storage |
 | Backup destinations | Google Drive and user-selected local files |
 
-The phone encrypts/decrypts communication. Go authorizes accounts and membership and relays encrypted payloads; it does not hold content-decryption keys. Supabase stores ciphertext, including protected thumbnails. Privileged storage credentials never ship in the mobile app. Downloads require authorization in addition to encryption.
+The phone encrypts/decrypts communication. Phoenix authorizes accounts and membership and relays encrypted payloads; it does not hold content-decryption keys. Supabase stores ciphertext, including protected thumbnails. Privileged storage credentials never ship in the mobile app. Downloads require authorization in addition to encryption.
 
-Use an established encryption protocol, not custom cryptographic primitives. Protocol/library selection is unresolved pending Expo/native integration, licensing, group membership, restricted Moments audiences, device replacement, and backup validation. End-to-end encryption alone does not automatically enforce history visibility; membership epochs and key distribution must enforce it.
+Use an established encryption protocol, not custom cryptographic primitives. Protocol/library selection is vodozemac (Olm/Megolm, amended 2026-10-16); native Android integration, licensing review, group membership, restricted Moments audiences, device replacement, and backup validation remain outstanding. End-to-end encryption alone does not automatically enforce history visibility; membership epochs and key distribution must enforce it.
 
 Protect message bodies, photos, GIF/sticker payloads, Moments, replies, reactions, and PING/PONG content. Profile/status and Now Playing distribution need an explicit audience/key design. Authentication, routing, delivery, and membership metadata are necessary server-visible control data; do not claim that E2E hides every metadata field. Phone verification and third-party music authorization have their own provider trust boundaries.
 
-Proposed Go organization separates domain rules and use cases from HTTP/realtime transport, PostgreSQL access, and storage adapters. Start with a single service rather than assuming microservices. Transport, hosting of Go, notification provider, and exact library/SDK versions are not selected yet.
+Proposed backend organization separates domain rules and use cases from HTTP/realtime transport, PostgreSQL access, and storage adapters. Start with a single service rather than assuming microservices. Transport, hosting, notification provider, and exact library/SDK versions are not selected yet.
 
 The local database owns the user's available decrypted history and pending sends. PostgreSQL owns current account authorization, accepted friendships, membership, and delivery bookkeeping. Encrypted event storage supplies offline delivery; its retention is still a technical decision. Supabase owns media bytes, not their plaintext meaning or access keys.
 
@@ -191,7 +193,7 @@ Apply the supplied Anti Slop UI skill and core rules. Exact colors, typography, 
 
 This is an agreed product specification with bounded technical unknowns, not an implementation-ready security design. Resolve these without reopening accepted product choices:
 
-- E2E protocol and native integration; group/audience key lifecycle; identity verification and replacement-phone safety.
+- E2E protocol native integration (vodozemac selected 2026-10-16); group/audience key lifecycle; identity verification and replacement-phone safety.
 - OTP, notification, GIF, and background-removal providers or on-device implementations.
 - Spotify production access and realistic background-update behavior.
 - PIN lifecycle, account deletion/number reassignment, Circle admin succession/rejoin, and delivery edge cases.
