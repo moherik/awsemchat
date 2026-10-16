@@ -66,8 +66,13 @@ export function createSessionOwner(api: AuthTransport, vault: SessionVault, devi
       publish('ready', session);
     }),
     logout: () => serial(async () => {
-      if (current) await api.logout(current.accessToken);
+      let revocationError: unknown;
+      if (current) {
+        try { await api.logout(current.accessToken); }
+        catch (error) { revocationError = error; }
+      }
       await clear();
+      if (revocationError) throw revocationError;
     }),
     requireSession(): Session {
       if (snapshot.status === 'offline') throw new AuthError('NETWORK');

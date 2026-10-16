@@ -1,8 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
-import { Platform } from 'react-native';
 
 type CutoutResult = { uri: string; width: number; height: number };
-const module = Platform.OS === 'web' ? null : requireOptionalNativeModule<{
+const module = requireOptionalNativeModule<{
   removeBackground(uri: string, options: { cropToSubject: boolean; maxDimension: number }): Promise<CutoutResult>;
 }>('ExpoBackgroundRemoval');
 export const canRemoveBackground = module !== null;

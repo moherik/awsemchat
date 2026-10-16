@@ -3,6 +3,10 @@
     "name": "AwsemChat",
     "slug": "awsemchat",
     "version": "1.0.0",
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "awsemchat",
@@ -21,12 +25,10 @@
       "allowBackup": false,
       "package": "com.moherik.awsemchat"
     },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
-    },
     "plugins": [
       "expo-router",
+      "./plugins/with-android-release-signing",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {

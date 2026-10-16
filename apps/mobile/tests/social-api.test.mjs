@@ -50,3 +50,25 @@ test('mutations preserve failed requests and reject malformed successful acknowl
  await assert.rejects(api.createCircle('same-operation'),e=>e.code==='UNAVAILABLE');assert.deepEqual(await api.createCircle('same-operation'),circle);assert.deepEqual(requests.map(r=>r.body),[{operationId:'same-operation'},{operationId:'same-operation'}]);
  await assert.rejects(api.leave('circle-one'),e=>e.code==='INVALID_RESPONSE');
 });
+test('membership operations preserve exact interval guards and verify the returned operation',async t=>{
+ const input={operationId:'leave-one',action:'leave',actorInterval:'interval-alice',expectedEpoch:2};
+ const result={operationId:'leave-one',circleId:'circle-one',action:'leave',closed:false};
+ const {api,requests}=await fixture(t,(_,res)=>json(res,result));
+ assert.equal(typeof api.mutateMembership,'function','guarded membership API is missing');
+ assert.deepEqual(await api.mutateMembership('circle-one',input),result);
+ assert.deepEqual(requests[0].body,input);assert.equal(requests[0].path,'/v1/circles/circle-one/membership-operations');
+ const mismatch=await fixture(t,(_,res)=>json(res,{...result,operationId:'different'}));
+ await assert.rejects(mismatch.api.mutateMembership('circle-one',input),e=>e.code==='INVALID_RESPONSE');
+});
+test('membership client rejects missing guards and preserves stale-membership errors',async t=>{
+ const {api,requests}=await fixture(t,(_,res)=>json(res,{code:'MEMBERSHIP_CHANGED'},409));
+ assert.equal(typeof api.mutateMembership,'function','guarded membership API is missing');
+ await assert.rejects(api.mutateMembership('circle-one',{operationId:'remove-one',action:'remove',actorInterval:'interval-alice',expectedEpoch:2,targetId:'bob'}),e=>e.code==='INVALID_INPUT');
+ assert.equal(requests.length,0);
+ await assert.rejects(api.mutateMembership('circle-one',{operationId:'leave-one',action:'leave',actorInterval:'interval-alice',expectedEpoch:2}),e=>e.code==='MEMBERSHIP_CHANGED');
+});
+test('membership cancellation parses a fence or the original committed result',async t=>{
+ const input={operationId:'cancel-one',action:'leave',actorInterval:'interval-alice',expectedEpoch:2};
+ const {api,requests}=await fixture(t,(_,res)=>json(res,{operationId:'cancel-one',circleId:'circle-one',action:'leave',closed:false,cancelled:true}));
+ assert.equal(typeof api.cancelMembership,'function','membership cancellation API is missing');assert.equal((await api.cancelMembership('circle-one',input)).cancelled,true);assert.equal(requests[0].path,'/v1/circles/circle-one/membership-operations/cancel');assert.deepEqual(requests[0].body,input);
+});

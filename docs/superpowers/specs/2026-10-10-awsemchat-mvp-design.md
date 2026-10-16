@@ -16,7 +16,7 @@ The MVP succeeds when real users can register, connect by PIN, reliably exchange
 Android first, using Expo and React Native with future iOS support in mind. One active phone per account. All three delivery stages below belong to the intended MVP; they are sequencing, not scope reductions.
 
 1. Private communication: phone verification, PIN friend requests, encrypted private chats, Circles, delivery receipts, encrypted backup and restore.
-2. Memories and expression: Moments, replies into Chat, reactions, GIFs, Circle emoji, sticker editor and collections, PING/PONG.
+2. Memories and expression: Moments, replies into Chat, standard emoji reactions, GIFs, sticker editor and collections, PING/PONG.
 3. Music: automatic Spotify Now Playing, subject to provider and mobile feasibility validation.
 
 Voice/video calls, public feeds, public groups, online/last-seen indicators, typing indicators, read receipts, and multiple active devices are outside the MVP. Drawing tools and a standalone sticker-upload workflow are also excluded.
@@ -41,7 +41,7 @@ Main tabs:
 | Friends | Accepted friends, incoming requests, add by PIN |
 | You | Profile, status, Spotify connection, personal stickers, backup/restore, settings |
 
-Every private conversation and Circle has Chat and Moments tabs. Moments has no global feed. Circle details contain members, invitations, shared stickers/emoji, admin controls, and notification settings.
+Every private conversation and Circle has Chat and Moments tabs. Moments has no global feed. Circle details contain members, invitations, shared stickers, admin controls, and notification settings.
 
 Private-chat profiles show text status and Now Playing. Circle messages show the sender's name and latest profile text status below it, including on older messages. Circle message bubbles do not show Now Playing.
 
@@ -60,7 +60,7 @@ No read receipts, typing indicators, online indicators, or last-seen timestamps.
 - Private groups named Circles, capped at 20 participants including the creator.
 - Admins invite their accepted friends; invitees accept before joining.
 - New members cannot access messages or Moments from before they joined.
-- Circle members may add shared custom emoji and stickers; admins may remove them from the shared collection.
+- Circle members may add shared stickers; admins may remove them from the shared collection. Custom emoji are deferred beyond the MVP.
 - Blocking another member does not automatically remove either person from a shared Circle. A user can leave or ask an admin to remove someone.
 - Removal/leave must stop access to future content. It cannot revoke copies already received.
 - Admin succession, the last admin leaving, invitation capacity races, and rejoining rules must be defined before implementing membership. Rejoining must not grant access to content from an absence by accident.
@@ -90,11 +90,11 @@ Stickers are created in a small in-app editor with photo crop, background remova
 
 Users can save received stickers into their personal collection and reuse them in other conversations. Saving is an explicit copy action; removing a Circle sticker from its shared picker cannot recall personal copies already saved.
 
-The Circle sticker picker has Group stickers and Personal stickers tabs. Every Circle member can contribute shared stickers, managed through Circle details; admins can remove them. Each Circle has its own custom emoji collection for messages and reactions, with member contributions and admin removal.
+The Circle sticker picker has Group stickers and Personal stickers tabs. Every Circle member can contribute shared stickers, managed through Circle details; admins can remove them. Chat and Moment reactions use standard emoji. Custom Circle emoji creation, sharing, and reactions are out of the MVP.
 
-Private chats use personal stickers and standard emoji. Cross-Circle custom-emoji reuse is not implied.
+Private chats and Circles use standard emoji reactions. Cross-Circle custom-emoji reuse is not part of the MVP.
 
-Background removal should be evaluated on-device to avoid exposing source photos to an external service. GIF provider, content limits, supported sticker/emoji formats, collection limits, and asset-deletion behavior need technical decisions. GIF search must not transmit private conversation content.
+Background removal should be evaluated on-device to avoid exposing source photos to an external service. GIF provider, content limits, supported sticker formats, collection limits, and asset-deletion behavior need technical decisions. GIF search must not transmit private conversation content.
 
 ## 9. PING/PONG
 
@@ -167,7 +167,7 @@ Classic BlackBerry-era BBM feeling, modernized for AwsemChat rather than copied 
 - Familiar chat bubbles: distinguish authors and keep the conversation central.
 - Light/dark themes, comfortable touch targets, accessible text sizes: support daily mobile use.
 - Filter pills are functional categories explicitly requested by the user; avoid making unrelated controls uniformly pill-shaped.
-- Stickers, custom emoji, and personal Moments supply expression; avoid decorative status dots that suggest availability.
+- Stickers and personal Moments supply expression; standard emoji reactions remain available. Avoid decorative status dots that suggest availability.
 
 Design dials: Energy 2, Rhythm 1, Motion 1. Balanced personality, predictable conversation structure, and brief purposeful interaction feedback. PING may have a short triggered effect; no perpetual motion.
 
@@ -180,7 +180,7 @@ Apply the supplied Anti Slop UI skill and core rules. Exact colors, typography, 
 3. A Circle rejects a 21st participant, including concurrent joins. New members cannot decrypt earlier messages or Moments.
 4. Only an original sender promotes their message/photo. Later joiners cannot access the resulting Moment or previews/replies about it.
 5. A Moment reply appears in Chat; tapping its preview opens that Moment for authorized members. Reactions appear on the Moment.
-6. A user crops a photo, removes its background, adds text, and creates a usable sticker. Members contribute Circle stickers/emoji, admins remove them, and received stickers can be saved personally.
+6. A user crops a photo, removes its background, adds text, and creates a usable sticker. Members contribute Circle stickers, admins remove them, and received stickers can be saved personally.
 7. PING/PONG works only after friendship acceptance and only in private chats. Muted alerts remain quiet; PONG requires an explicit action.
 8. Updated text status appears below names in older Circle messages. Now Playing appears in private-chat profiles and never in Circle bubbles.
 9. Both Drive and local backups restore included content on a replacement phone. Wrong recovery secrets or corrupted backups fail safely. The previous phone loses future server access.

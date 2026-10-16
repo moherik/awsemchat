@@ -29,6 +29,26 @@ public final class ArchiveCodecTest {
     List<ArchiveCodec.Record> records = List.of(
       new ArchiveCodec.Record("one", "chat", List.of("alice", "bob"), "before-removal", 12, "hello"),
       new ArchiveCodec.Record("two", "chat", List.of("alice"), "after-removal", 14, "world"));
+    List<ArchiveCodec.Record> fullHistory = new ArrayList<>();
+    for (int i = 0; i < 768; i++) fullHistory.add(new ArchiveCodec.Record("message-" + i, "self-history", List.of("account"), "history-only", 0, "synthetic ".repeat(100)));
+    byte[] fullArchive = ArchiveCodec.encode("account", fullHistory, key);
+    check(ArchiveCodec.decode("account", fullArchive, key).equals(fullHistory));
+    List<ArchiveCodec.Record> stickerArchiveRecords = new ArrayList<>();
+    for (int i = 0; i < 763; i++) stickerArchiveRecords.add(new ArchiveCodec.Record("entry-" + i, "self-history", List.of("account"), "history-only", 0, "synthetic ".repeat(100)));
+    String stickerImage = "data:image/png;base64," + "A".repeat(700_000);
+    int stickerParts = (stickerImage.length() + 160 * 1024 - 1) / (160 * 1024);
+    for (int part = 0; part < stickerParts; part++) {
+      String data = stickerImage.substring(part * 160 * 1024, Math.min(stickerImage.length(), (part + 1) * 160 * 1024));
+      String payload = "{\"kind\":\"personal-sticker.v1\",\"stickerIndex\":0,\"part\":" + part + ",\"parts\":" + stickerParts + ",\"data\":\"" + data + "\"" +
+        (part == 0 ? ",\"sticker\":{\"id\":\"local-large\",\"artwork\":{\"image\":\"\",\"title\":\"Large\",\"text\":\"\",\"textColor\":\"#FFFFFF\",\"textSize\":26,\"textY\":72,\"background\":null,\"pack\":\"Saved\"}}" : "") + "}";
+      check(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 256 * 1024);
+      stickerArchiveRecords.add(new ArchiveCodec.Record("sticker-0-" + part, "awsemchat.personal-stickers.v1", List.of("account"), "personal-library", 0, payload));
+    }
+    check(stickerArchiveRecords.size() == 768);
+    byte[] stickerArchive = ArchiveCodec.encode("account", stickerArchiveRecords, key);
+    check(ArchiveCodec.decode("account", stickerArchive, key).equals(stickerArchiveRecords));
+    List<ArchiveCodec.Record> escaped = List.of(new ArchiveCodec.Record("escaped", "self-history", List.of("account"), "history-only", 0, "\\u0000".repeat(32768)));
+    check(ArchiveCodec.decode("account", ArchiveCodec.encode("account", escaped, key), key).equals(escaped));
     byte[] archive = ArchiveCodec.encode("account", records, key);
     check(ArchiveCodec.decode("account", archive, key).equals(records));
     rejects(() -> ArchiveCodec.decode("other", archive, key));
@@ -44,9 +64,9 @@ public final class ArchiveCodecTest {
     rejects(() -> ArchiveCodec.encode("account", Collections.nCopies(129, records.get(0)), key));
     rejects(() -> ArchiveCodec.encode("account", List.of(new ArchiveCodec.Record("x", "chat", List.of("a", "a"), "i", 0, "p")), key));
     rejects(() -> ArchiveCodec.encode("account", List.of(new ArchiveCodec.Record("x", "chat", List.of("a"), "i", -1, "p")), key));
-    rejects(() -> ArchiveCodec.encode("account", List.of(new ArchiveCodec.Record("x", "chat", List.of("a"), "i", 0, "p".repeat(32769))), key));
+    rejects(() -> ArchiveCodec.encode("account", List.of(new ArchiveCodec.Record("x", "chat", List.of("a"), "i", 0, "p".repeat(262145))), key));
     List<ArchiveCodec.Record> capacity = new ArrayList<>();
-    for (int i = 0; i < 10; i++) capacity.add(new ArchiveCodec.Record("id" + i, "chat", List.of("a"), "i", i, "p".repeat(32768)));
+    for (int i = 0; i < 65; i++) capacity.add(new ArchiveCodec.Record("id" + i, "chat", List.of("a"), "i", i, "p".repeat(262144)));
     rejects(() -> ArchiveCodec.encode("account", capacity, key));
     // Frames carry their original ciphertext/nonce when moved: position authentication must fail.
     List<byte[]> frames = frames(archive);

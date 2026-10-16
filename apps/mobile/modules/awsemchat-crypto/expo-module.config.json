@@ -1,6 +1,12 @@
 {
-  "platforms": ["android"],
+  "platforms": [
+    "android"
+  ],
   "android": {
-    "modules": ["expo.modules.awsemchatcrypto.AwsemchatCryptoModule"]
+    "modules": [
+      "expo.modules.awsemchatcrypto.AwsemchatCryptoModule",
+      "expo.modules.awsemchatcrypto.GoogleDriveAuthorizationModule",
+      "expo.modules.awsemchatcrypto.AwsemchatMediaSessionsModule"
+    ]
   }
 }

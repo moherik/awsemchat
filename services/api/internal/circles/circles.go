@@ -63,21 +63,17 @@ func (s *Service) Create(ctx context.Context, actor auth.Principal, operation st
 	return c, nil
 }
 func (s *Service) Leave(ctx context.Context, actor auth.Principal, id string) error {
+	return s.legacyMembership(ctx, actor, id, "leave", "")
+}
+
+func (s *Service) leaveTx(ctx context.Context, tx pgx.Tx, actor auth.Principal, id string) error {
 	if !idPattern.MatchString(id) {
 		return ErrInvalid
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return auth.ErrUnavailable
-	}
-	defer tx.Rollback(ctx)
-	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
-		return err
 	}
 	var epoch int64
 	var count int
 	var closed bool
-	err = tx.QueryRow(ctx, "SELECT epoch,member_count,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", id).Scan(&epoch, &count, &closed)
+	err := tx.QueryRow(ctx, "SELECT epoch,member_count,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", id).Scan(&epoch, &count, &closed)
 	if errors.Is(err, pgx.ErrNoRows) || closed {
 		return ErrDenied
 	}
@@ -119,31 +115,24 @@ func (s *Service) Leave(ctx context.Context, actor auth.Principal, id string) er
 	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", id, actor.AccountID); err != nil {
 		return auth.ErrUnavailable
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return auth.ErrUnavailable
-	}
 	return nil
 }
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func (s *Service) Handoff(ctx context.Context, actor auth.Principal, circleID, successorID string) error {
+	return s.legacyMembership(ctx, actor, circleID, "handoff", successorID)
+}
+
+func (s *Service) handoffTx(ctx context.Context, tx pgx.Tx, actor auth.Principal, circleID, successorID string) error {
 	if !idPattern.MatchString(circleID) || !idPattern.MatchString(successorID) {
 		return ErrInvalid
 	}
 	if successorID == actor.AccountID {
 		return ErrDenied
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return auth.ErrUnavailable
-	}
-	defer tx.Rollback(ctx)
-	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
-		return err
-	}
 	var closed bool
-	err = tx.QueryRow(ctx, "SELECT closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&closed)
+	err := tx.QueryRow(ctx, "SELECT closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&closed)
 	if errors.Is(err, pgx.ErrNoRows) || closed {
 		return ErrDenied
 	}
@@ -172,9 +161,6 @@ func (s *Service) Handoff(ctx context.Context, actor auth.Principal, circleID, s
 		return auth.ErrUnavailable
 	}
 	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", circleID, actor.AccountID); err != nil {
-		return auth.ErrUnavailable
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return auth.ErrUnavailable
 	}
 	return nil
@@ -353,23 +339,19 @@ func (s *Service) Respond(ctx context.Context, actor auth.Principal, invitationI
 }
 
 func (s *Service) Remove(ctx context.Context, actor auth.Principal, circleID, targetID string) error {
+	return s.legacyMembership(ctx, actor, circleID, "remove", targetID)
+}
+
+func (s *Service) removeTx(ctx context.Context, tx pgx.Tx, actor auth.Principal, circleID, targetID string) error {
 	if !idPattern.MatchString(circleID) || !idPattern.MatchString(targetID) {
 		return ErrInvalid
 	}
 	if targetID == actor.AccountID {
 		return ErrDenied
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return auth.ErrUnavailable
-	}
-	defer tx.Rollback(ctx)
-	if err := s.auth.LockSession(ctx, tx, actor); err != nil {
-		return err
-	}
 	var epoch int64
 	var closed bool
-	err = tx.QueryRow(ctx, "SELECT epoch,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&epoch, &closed)
+	err := tx.QueryRow(ctx, "SELECT epoch,closed_at IS NOT NULL FROM circles WHERE id=$1 FOR UPDATE", circleID).Scan(&epoch, &closed)
 	if errors.Is(err, pgx.ErrNoRows) || closed {
 		return ErrDenied
 	}
@@ -402,9 +384,6 @@ func (s *Service) Remove(ctx context.Context, actor auth.Principal, circleID, ta
 		return auth.ErrUnavailable
 	}
 	if _, err := tx.Exec(ctx, "UPDATE circle_invites SET status='revoked' WHERE circle_id=$1 AND inviter_id=$2 AND status='pending'", circleID, targetID); err != nil {
-		return auth.ErrUnavailable
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return auth.ErrUnavailable
 	}
 	return nil

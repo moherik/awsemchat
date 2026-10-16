@@ -11,8 +11,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 /** The bounded records-only wire format is specified in validation/backup/archive-v1.md. */
 public final class ArchiveCodec {
-  public static final int MAX_ARCHIVE = 384 * 1024;
-  private static final int MAX_RECORDS = 128, MAX_PLAIN = 256 * 1024, MAX_FRAME = 36 * 1024;
+  public static final int MAX_ARCHIVE = 17 * 1024 * 1024;
+  private static final int MAX_RECORDS = 768, MAX_PLAIN = 16 * 1024 * 1024, MAX_FRAME = 260 * 1024;
   private static final byte[] MAGIC = "AWSEMBK1".getBytes(StandardCharsets.US_ASCII);
   private static final SecureRandom RANDOM = new SecureRandom();
   public static final class InvalidArchive extends Exception {
@@ -49,13 +49,13 @@ public final class ArchiveCodec {
     for (String id : record.originalAudience()) string(out, id, 128, false);
     string(out, record.membershipInterval(), 128, false);
     require(record.receivedAt() >= 0 && record.receivedAt() <= 9007199254740991L);
-    out.writeLong(record.receivedAt()); string(out, record.payload(), 32768, true); return bytes.toByteArray();
+    out.writeLong(record.receivedAt()); string(out, record.payload(), 256 * 1024, true); return bytes.toByteArray();
   }
   private static Record record(byte[] bytes) throws Exception {
     var in = input(bytes); String id = string(in, 128, false), conversation = string(in, 128, false);
     int count = in.readInt(); require(count >= 1 && count <= 20); List<String> audience = new ArrayList<>();
     for (int i = 0; i < count; i++) audience.add(string(in, 128, false));
-    var result = new Record(id, conversation, audience, string(in, 128, false), in.readLong(), string(in, 32768, true));
+    var result = new Record(id, conversation, audience, string(in, 128, false), in.readLong(), string(in, 256 * 1024, true));
     require(in.available() == 0); record(result); return result;
   }
   private static byte[] aad(byte[] header, byte[] manifestHash, int type, int index, int length) throws IOException {

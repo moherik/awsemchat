@@ -79,6 +79,8 @@ Progress (2026-10-11): Go authentication core, explicit migration command, local
 
 ## Task 4: Reliable encrypted messaging
 
+Current slice details: [message relay contract](../../technical/message-relay.md) and [project status](../../technical/project-status.md). Native-envelope decoding, relay persistence, inbox, delivery reconciliation and typed Circle-profile routing have verified foundations. The owner chose a fixed original recipient set: leaving never reduces the acknowledgments required for Delivered. Rich messages, complete production UI and two-device acceptance remain unfinished, so composite checkboxes stay open.
+
 **Files:** `services/api/internal/messages/`, `services/api/internal/realtime/`, `services/api/migrations/003_events.sql`, `apps/mobile/src/features/chat/`, `apps/mobile/src/storage/outbox.ts`.
 
 **Interfaces:** `SendEnvelope(ctx context.Context, actorID string, envelope Envelope) (EventID, error)`; `AcknowledgeDelivery(ctx context.Context, recipientID string, eventID EventID) error`; client `queueMessage(input: MessageInput): Promise<MessageID>`.
@@ -121,15 +123,15 @@ Progress (2026-10-11): Go authentication core, explicit migration command, local
 - [ ] Implement direct Moments, own-message promotion, chronological album, attached reactions, and replies in Chat with deep navigation.
 - [ ] Verify three-device restricted-audience scenario, offline deletion/reconnect, and backup round-trip of Moments. Commit.
 
-## Task 8: Stickers, Circle emoji, and GIFs
+## Task 8: Stickers and GIFs (custom Circle emoji deferred)
 
-**Files:** `apps/mobile/src/features/stickers/`, `apps/mobile/src/features/emoji/`, `apps/mobile/src/features/gifs/`, `services/api/internal/collections/`, `services/api/migrations/006_collections.sql`.
+**Files:** `apps/mobile/src/features/stickers/`, `apps/mobile/src/features/gifs/`, `services/api/internal/collections/`, `services/api/migrations/006_collections.sql`.
 
 **Interfaces:** `createSticker(input: StickerEdit): Promise<StickerID>`; `saveReceivedSticker(messageID: MessageID): Promise<StickerID>`; `AddCircleAsset(ctx context.Context, actorID, circleID string, asset AssetEnvelope) error`; `RemoveCircleAsset(ctx context.Context, actorID, circleID, assetID string) error`.
 
 - [ ] Expand the slice plan with selected on-device image APIs, formats/limits, copied personal assets, encrypted collection distribution, and GIF provider contracts.
 - [ ] Write failing assertions: crop/background removal/text persist in sticker; no direct finished-sticker upload or drawing controls; members contribute, nonmembers denied, only admins remove shared assets; saved personal copy survives picker removal; GIF search sends no conversation data.
-- [ ] Implement editor and Group stickers/Personal stickers tabs, save action, custom emoji picker/reactions, and GIF selection.
+- [ ] Implement the editor and Group stickers/Personal stickers tabs, save action, and GIF selection. Standard emoji reactions remain available; custom Circle emoji creation, sharing, and reactions are deferred beyond the MVP.
 - [ ] Verify devices with denied photo permissions, large images, cancelled edits, removed collection assets, and backup/restore. Commit.
 
 ## Task 9: PING/PONG, profiles, and safety controls

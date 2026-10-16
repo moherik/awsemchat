@@ -23,6 +23,27 @@ function receive(bytes: string) {
 export async function runSignedPrekeyHarness(phase: string) {
   if (!__DEV__) throw new Error('UNAVAILABLE');
   const [a, b, c] = names.map(durableEncryption);
+  if (phase === 'prekeyProof' || phase === 'prekeyProofResume') {
+    const binding = { accountId: 'interop-account', deviceId: 'interop-device', generation: 7 };
+    if (phase === 'prekeyProof') {
+      await control(names[1], 'reset');
+      await b.initialize();
+      await b.preparePublication('account-proof');
+    }
+    const before = await b.prekeyStatus();
+    const registration = await b.signPublication('account-proof', binding);
+    assert(registration.bundles.length === 20 && /^[A-Za-z0-9+/]{86}$/.test(registration.proof));
+    assert(JSON.stringify(await b.signPublication('account-proof', binding)) === JSON.stringify(registration));
+    assert(JSON.stringify(await b.prekeyStatus()) === JSON.stringify(before));
+    await rejected(() => b.signPublication('unknown-proof', binding), 'UNKNOWN_OPERATION');
+    await rejected(() => b.signPublication('account-proof', { ...binding, generation: 0 }), 'INVALID_INPUT');
+    if (phase === 'prekeyProofResume') {
+      assert(await control(names[1], 'compareCheckpoint', JSON.stringify(registration)) === true);
+      return ['ACCOUNT_PUBLICATION_PROOF_EXACT_PROCESS_RESTART'];
+    }
+    await control(names[1], 'checkpoint', JSON.stringify(registration));
+    return ['ACCOUNT_PUBLICATION_PROOF_NATIVE', 'PROOF_RETRY_EXACT', 'SIGNING_DOES_NOT_CONFIRM_KEYS', 'INVALID_PROOF_REQUEST_REJECTED'];
+  }
   if (phase === 'prekeyResume') {
     const batch = await b.preparePublication('initial');
     assert(await control(names[1], 'compareCheckpoint', JSON.stringify(batch)) === true);

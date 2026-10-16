@@ -1,6 +1,13 @@
 import { AuthError } from '../features/auth/api.ts';
 import type { Session } from '../features/auth/api.ts';
 export type AccountBinding = Pick<Session, 'account' | 'deviceId' | 'generation'>;
+export type PublicationBinding = { accountId: string; deviceId: string; generation: number };
+export async function signAccountPublication<T>(current: () => Session, bound: AccountBinding, operation: string,
+  sign: (operation: string, binding: PublicationBinding) => Promise<T>): Promise<T> {
+  return guardAccountOperation(current, bound, () => sign(operation, {
+    accountId: bound.account.id, deviceId: bound.deviceId, generation: bound.generation,
+  }));
+}
 export async function accountNamespace(origin: string, binding: AccountBinding, digest: (value: string) => Promise<string>): Promise<string> {
   const value = JSON.stringify(['awsemchat.device.v1', origin, binding.account.id, binding.deviceId, binding.generation]);
   const hash = await digest(value);

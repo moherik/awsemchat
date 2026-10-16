@@ -36,7 +36,14 @@ export function createLoginFlow(owner: ReturnType<typeof createSessionOwner>, pr
   return {
     getSnapshot: () => snapshot,
     logout: () => execute(async () => {
-      await owner.logout();
+      try { await owner.logout(); }
+      catch (error) {
+        if (owner.getSnapshot().status === 'signed-out') {
+          attempt = undefined;
+          publish({ phase: 'phone', phone: '' });
+        }
+        throw error;
+      }
       attempt = undefined;
       publish({ phase: 'phone', phone: '' });
     }),

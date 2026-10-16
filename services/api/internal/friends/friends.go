@@ -238,6 +238,21 @@ func (s *Service) RequireAccepted(ctx context.Context, tx pgx.Tx, actor auth.Pri
 	return nil
 }
 
+func (s *Service) AcceptedRequest(ctx context.Context, tx pgx.Tx, actor auth.Principal, peer string) (string, error) {
+	if err := s.RequireAccepted(ctx, tx, actor, peer); err != nil {
+		return "", err
+	}
+	low, high := actor.AccountID, peer
+	if low > high {
+		low, high = high, low
+	}
+	var request string
+	if err := tx.QueryRow(ctx, "SELECT request_id FROM friend_links WHERE low_id=$1 AND high_id=$2 AND status='accepted'", low, high).Scan(&request); err != nil {
+		return "", auth.ErrUnavailable
+	}
+	return request, nil
+}
+
 type Contact struct {
 	AccountID string `json:"accountId"`
 	PIN       string `json:"pin"`

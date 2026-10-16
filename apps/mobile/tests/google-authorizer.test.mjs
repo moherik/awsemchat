@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import * as google from '../src/features/backup/google-authorizer.ts';
+test('native consent cancellation returns no token',async()=>{assert.equal(await google.authorizeGoogle(async()=>({cancelled:true})),null);});
+test('native consent result returns only validated token and granted scopes',async()=>{assert.deepEqual(await google.authorizeGoogle(async()=>({cancelled:false,accessToken:'google-token',grantedScopes:['openid'],privateDiagnostic:'ignored'})),{accessToken:'google-token',grantedScopes:['openid']});});
+test('malformed native result is rejected',async()=>{for(const value of [{cancelled:false},{cancelled:false,accessToken:'token\n',grantedScopes:[]},{cancelled:false,accessToken:'token',grantedScopes:'openid'}])await assert.rejects(google.authorizeGoogle(async()=>value),{message:'INVALID_RESPONSE'});});
+test('native SDK failures expose no provider diagnostic',async()=>{await assert.rejects(google.authorizeGoogle(async()=>{throw Error('secret diagnostic');}),{message:'UNAVAILABLE'});});

@@ -1,11 +1,11 @@
 /* eslint-disable react-hooks/refs -- PanResponder stores these handlers; refs are read only when a gesture fires, never during render. */
 import { useRef, useEffect, useMemo } from 'react';
-import { PanResponder, Platform, Text, View } from 'react-native';
+import { PanResponder, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import type { StickerTextBox } from './model';
 
 export type CropRect = { x: number; y: number; width: number; height: number };
-const touchStyle = Platform.OS === 'web' ? { touchAction: 'none' } as const : {};
+const touchStyle = {};
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 export function DraggableText({ box, size, selected, onSelect, onChange }: { box: StickerTextBox; size: number; selected: boolean; onSelect: () => void; onChange: (box: StickerTextBox) => void }) {
   const current = useRef(box); useEffect(() => { current.current = box; }, [box]);

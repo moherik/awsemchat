@@ -50,6 +50,7 @@ async function initialize(db: SQLite.SQLiteDatabase) {
       originalAudience TEXT NOT NULL, membershipInterval TEXT NOT NULL,
       receivedAt INTEGER NOT NULL, payload TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS history_conversation ON history(conversationId, receivedAt, eventId);
+      CREATE TABLE IF NOT EXISTS app_data (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
       PRAGMA user_version = 1;`);
   });
 }
@@ -146,6 +147,31 @@ export async function openEncryptedHistory(namespace: string) {
   }
   return {
     append: (records: Iterable<HistoryRecord>) => serial(() => insert(db, records)),
+    getData: (key: string) => serial(async () => {
+      if (!/^[a-z][a-z0-9:_-]{0,128}$/.test(key)) throw new Error('Invalid local data key');
+      const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_data WHERE key = ?', key);
+      return row?.value;
+    }),
+    setData: (key: string, value: string) => serial(async () => {
+      if (!/^[a-z][a-z0-9:_-]{0,128}$/.test(key) || typeof value !== 'string' || value.length > 3_200_000) throw new Error('Invalid local data');
+      await db.runAsync('INSERT INTO app_data(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, value);
+    }),
+    listData: (prefix: string) => serial(async () => {
+      if (!/^[a-z][a-z0-9:_-]{0,128}$/.test(prefix)) throw new Error('Invalid local data key');
+      return db.getAllAsync<{ key: string; value: string }>('SELECT key, value FROM app_data WHERE key LIKE ? ORDER BY key', `${prefix}%`);
+    }),
+    mergeData: (prefix: string, values: readonly { key: string; value: string }[]) => serial(async () => {
+      if (!/^[a-z][a-z0-9:_-]{0,128}$/.test(prefix) || !Array.isArray(values) ||
+          values.some(item => !item.key.startsWith(prefix) || !/^[a-z][a-z0-9:_-]{0,128}$/.test(item.key) || typeof item.value !== 'string' || item.value.length > 3_200_000) ||
+          new Set(values.map(item => item.key)).size !== values.length) throw new Error('Invalid local data');
+      await db.withTransactionAsync(async () => {
+        for (const item of values) await db.runAsync('INSERT INTO app_data(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING', item.key, item.value);
+      });
+    }),
+    deleteData: (key: string) => serial(async () => {
+      if (!/^[a-z][a-z0-9:_-]{0,128}$/.test(key)) throw new Error('Invalid local data key');
+      await db.runAsync('DELETE FROM app_data WHERE key = ?', key);
+    }),
     list: (conversationId: string) => serial(async () => {
       const rows = await db.getAllAsync<Omit<HistoryRecord, 'originalAudience'> & { originalAudience: string }>(
         'SELECT * FROM history WHERE conversationId = ? ORDER BY receivedAt, eventId', conversationId);

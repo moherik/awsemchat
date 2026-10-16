@@ -5,6 +5,7 @@ import { mkdtemp, readFile, writeFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAuthAPI, AuthError } from '../src/features/auth/api.ts';
+import { createLoginFlow } from '../src/features/auth/login-flow.ts';
 import { createSessionOwner } from '../src/features/auth/session-owner.ts';
 
 const token='A'.repeat(43);
@@ -88,4 +89,23 @@ test('online logout revokes token then clears durable authentication',async t=>{
  const {owner,vault,requests}=await setup(t);await owner.restore();await owner.logout();
  assert.equal(owner.getSnapshot().status,'signed-out');assert.equal(await vault.read(),null);
  assert.equal(requests.at(-1).path,'/v1/auth/logout');
+});
+
+test('offline logout clears this phone session even when server revocation cannot complete',async t=>{
+ const {owner,vault}=await setup(t,{network:'offline'});await owner.restore();
+ await assert.rejects(owner.logout(),error=>error.code==='NETWORK');
+ assert.equal(owner.getSnapshot().status,'signed-out');
+ assert.equal(await vault.read(),null);
+ assert.throws(()=>owner.requireSession(),error=>error.code==='SESSION_REVOKED');
+});
+
+test('offline logout returns the login flow to phone sign-in after clearing local session',async t=>{
+ const {owner,vault}=await setup(t,{network:'offline'});
+ const flow=createLoginFlow(owner,async()=>undefined,()=> 'operation-one');
+ await flow.restore();
+ assert.equal(flow.getSnapshot().phase,'offline');
+ await assert.rejects(flow.logout(),error=>error.code==='NETWORK');
+ assert.equal(flow.getSnapshot().phase,'phone');
+ assert.equal(owner.getSnapshot().status,'signed-out');
+ assert.equal(await vault.read(),null);
 });

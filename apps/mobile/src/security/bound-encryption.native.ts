@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { accountNamespace, guardAccountOperation } from './account-encryption';
+import { accountNamespace, guardAccountOperation, signAccountPublication } from './account-encryption';
 import { durableEncryption, DurableEncryptionError } from './durable-encryption';
 import type { createSessionOwner } from '../features/auth/session-owner';
 
@@ -14,7 +14,9 @@ export async function bindAccountEncryption(owner: ReturnType<typeof createSessi
       return adapter.bundle();
     }
   });
-  return new Proxy(adapter, {
+  const boundAdapter = { ...adapter, signPublication: (operation: string) =>
+    signAccountPublication(owner.requireSession, bound, operation, adapter.signPublication) };
+  return new Proxy(boundAdapter, {
     get(target, property) {
       const value = Reflect.get(target, property);
       if (typeof value !== 'function') return value;

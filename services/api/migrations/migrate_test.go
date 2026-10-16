@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestMigrationCreatesIdentitySchemaOnceAndDetectsDrift(t *testing.T) {
 		t.Fatalf("migrated readiness: %v", err)
 	}
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 3 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != len(scripts) {
 		t.Fatalf("migration count=%d,error=%v", count, err)
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO auth_accounts (id,phone_digest,pin) VALUES ('account',decode(repeat('42',32),'hex'),'ABCDEFGH')"); err != nil {
@@ -138,6 +139,24 @@ func TestCircleMigrationCreatesMembershipIntervalLedger(t *testing.T) {
 	}
 }
 
+func TestMessageRedactionMigrationCreatesMinimalAccountFeed(t *testing.T) {
+	pool := database(t)
+	ctx := context.Background()
+	if err := Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"message_redactions", "message_redaction_cursors", "message_redaction_feed"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil || !exists {
+			t.Errorf("redaction table %s missing: %v", table, err)
+		}
+	}
+	var redactedAt bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='message_events' AND column_name='redacted_at')`).Scan(&redactedAt); err != nil || !redactedAt {
+		t.Fatalf("message event redacted_at missing: %v", err)
+	}
+}
+
 func TestCircleReadinessRequiresMembershipLedger(t *testing.T) {
 	pool := database(t)
 	ctx := context.Background()
@@ -150,4 +169,46 @@ func TestCircleReadinessRequiresMembershipLedger(t *testing.T) {
 	if err := Ready(ctx, pool); !errors.Is(err, ErrSchema) {
 		t.Fatalf("missing Circle ledger accepted: %v", err)
 	}
+}
+
+func TestReadinessRejectsMissingCircleCollectionStorage(t *testing.T) {
+	pool := database(t)
+	ctx := context.Background()
+	if err := Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TABLE circle_collection_items CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Ready(ctx, pool); !errors.Is(err, ErrSchema) {
+		t.Fatalf("missing collection storage readiness=%v", err)
+	}
+}
+
+func TestNotificationMigrationCreatesAccountBoundDevices(t *testing.T) {
+	pool := database(t)
+	ctx := context.Background()
+	if err := Apply(ctx, pool); err != nil {
+		t.Fatalf("apply notification migration: %v", err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('notification_devices') IS NOT NULL").Scan(&exists); err != nil || !exists {
+		t.Fatalf("notification device table exists = %t, error = %v, want true", exists, err)
+	}
+	if err := Ready(ctx, pool); err != nil {
+		t.Fatalf("notification schema readiness = %v, want nil", err)
+	}
+}
+
+func TestNotificationMigrationIsRegistered(t *testing.T) {
+	t.Parallel()
+	for _, script := range scripts {
+		if script.version == 18 {
+			if !strings.Contains(script.sql, "CREATE TABLE notification_devices") || !strings.Contains(script.sql, "muted_conversations") || !strings.Contains(script.sql, "CREATE TABLE notification_outbox") {
+				t.Errorf("migration 18 SQL does not create device preferences and the notification outbox")
+			}
+			return
+		}
+	}
+	t.Error("notification migration version 18 is not registered")
 }

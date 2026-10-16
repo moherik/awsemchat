@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+const module=await import('../src/features/social/circle-avatar-editor.ts').catch(()=>({}));
+const media={version:1,id:'photo',key:'a'.repeat(64),size:1,mimeType:'image/png'},avatar={epoch:1,media};
+function fixture(){let saved=null,lose=false,revision=1;const calls=[];let state={canEdit:true,details:{epoch:1},profile:{state:'ready',revision,profile:{version:1,name:'Family',description:'Plans',avatar:null}}};
+ const profile={getSnapshot:()=>state,refresh:async()=>{},update:async(rev,value,operation)=>{assert.equal(rev,revision);assert.equal(operation,'avatar-operation');calls.push('publish');state.pending={profile:value};if(lose){lose=false;throw Error('NETWORK');}revision++;state={...state,pending:undefined,profile:{state:'ready',revision,profile:value}};},retry:async()=>{calls.push('retry');revision++;state={...state,pending:undefined,profile:{state:'ready',revision,profile:state.pending.profile}};}};
+ const upload={pending:async()=>saved,prepare:async(_,epoch,profileRevision)=>{saved={epoch,profileRevision,operationID:'avatar-operation',phase:'prepared',prepared:{descriptor:media}};},upload:async()=>{calls.push('upload');saved.phase='uploaded';return media;},acknowledge:async()=>{calls.push('ack');saved=null;}};
+ assert.equal(typeof module.createCircleAvatarEditor,'function','recoverable Circle avatar editor missing');
+ return{ports:{profile,upload},calls,editor:module.createCircleAvatarEditor({profile,upload}),lose:()=>{lose=true;},stale:()=>{revision=2;state={...state,profile:{...state.profile,revision}};},set pending(v){saved=v;}};
+}
+test('avatar selection uploads then publishes before clearing its recovery intent',async()=>{const f=fixture();await f.editor.choose({bytes:new Uint8Array([1]),mimeType:'image/png'});assert.deepEqual(f.calls,['upload','publish','ack']);assert.deepEqual(f.ports.profile.getSnapshot().profile.profile.avatar,avatar);});
+test('lost profile reply resumes the original queued profile without reuploading or overwriting it',async()=>{const f=fixture();f.lose();await assert.rejects(f.editor.choose({bytes:new Uint8Array([1]),mimeType:'image/png'}),/NETWORK/);await module.createCircleAvatarEditor(f.ports).resume();assert.deepEqual(f.calls,['upload','publish','retry','ack']);});
+test('remotely changed profiles block an unreferenced uploaded draft from replacing them',async()=>{const f=fixture();f.pending={epoch:1,profileRevision:1,phase:'uploaded',prepared:{descriptor:media}};f.stale();await assert.rejects(f.editor.resume(),/PROFILE_STALE/);assert.deepEqual(f.calls,[]);});

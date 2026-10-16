@@ -1,5 +1,5 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
-import { useDemo } from "./demo-store";
+import { usePalettePreference } from './palette-preference';
 import { ReactNode } from "react";
 import type { TextInputProps } from 'react-native';
 import {
@@ -14,9 +14,9 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 export function usePalette() {
-  const demo = useDemo();
   const system = useColorScheme();
-  return (demo.theme === "system" ? system : demo.theme) === "dark"
+  const preference = usePalettePreference();
+  return (preference === "system" ? system : preference) === "dark"
     ? {
         bg: "#172027",
         surface: "#202C34",

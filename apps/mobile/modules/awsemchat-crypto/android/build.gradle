@@ -46,3 +46,7 @@ tasks.register('buildRustCrypto', Exec) {
   }
 }
 tasks.named('preBuild').configure { dependsOn 'buildRustCrypto' }
+
+dependencies {
+  implementation "com.google.android.gms:play-services-auth:22.0.0"
+}

@@ -1,0 +1,45 @@
+# Google authorization for Drive backup
+
+Status: connection state and identity lookup implemented on2026-10-12. Native AuthorizationClient bridge and runtime/UI wiring are implemented. Provider registration and real-account acceptance remain unfinished. Drive is gated by EXPO_PUBLIC_GOOGLE_DRIVE_ENABLED=true and is disabled by default.
+
+AwsemChat sign-in remains phone verification. Google access is a separate optional authorization action for Drive backup, initiated by the user from backup settings. It must not become an alternate AwsemChat login or be requested during phone onboarding.
+
+`google-connection.ts` accepts an authorization adapter, token-authenticated identity lookup, current app-session guard and namespace fingerprint function. UI snapshots expose connection state and verified Google subject only. Access tokens remain in the private connection object and are returned only to Drive API consumers. No bearer token belongs in a pending-backup namespace or persisted binding.
+
+Connection requires granted drive.appdata and openid scope and a valid token. It obtains a stable Google subject through the identity endpoint before computing the backup namespace fingerprint. Use the public app origin/account/device/generation and Google subject for the fingerprint; use the current app bearer/session binding only for transient operation guards. Never key backups by email because Google email can change. Token expiration/reauthorization and native SDK cache handling remain bridge/runtime work; no expiry duration is guessed here.
+
+Cancellation preserves an existing valid connection. Failed reconnection clears obsolete access. App-session changes or local disconnect invalidate a pending authorization result; a lost session also clears previously connected state when the accessor throws. Google tokens cannot be retrieved for another app session. Concurrent connect calls are rejected while the consent flow is active. A disconnect here means local token/state removal; it is not yet provider grant revocation.
+
+`google-identity.ts` fetches Google's hard-coded HTTPS discovery document without a bearer header, validates its issuer and permits only the known Google userinfo origins/paths. It then sends the Google access token to that endpoint. Redirects, malformed/missing subjects and failed authorization are rejected with fixed errors. Only the subject is returned; email/name/photo response fields are discarded. Requests have30-second deadlines and bounded JSON response validation. Native callers must inject Expo fetch for the verified manual-redirect behavior. Localhost discovery overrides are explicitly development-only fixture options, never product configuration.
+
+Required native integration:
+
+1. Implemented a separate registered Expo Android module using Google Identity Services AuthorizationClient with play-services-auth22.0.0. Request only the selected backup scopes when the user taps Connect Drive, handle cached authorization or the pending-intent consent UI, return token/granted scopes or explicit cancellation, and sanitize SDK errors.
+2. Confirm openid grant normalization and subject-only userinfo behavior against the actual configured Google app. Do not add email/profile scopes merely to populate decorative UI; any extra required scope must be justified and recorded.
+3. Implemented account lifecycle cleanup and Expo fetch wiring. Derive a public-context SHA256 fingerprint before opening the native pending vault. Scope pending archives to that Google/app/device identity and retain old pending keys if the user changes Google accounts.
+4. Implemented Drive backup/list/restore/retry/key-save controls connected to runtime state; complete signed-in acceptance, including local disconnect, explicit provider revocation if exposed, cached token invalidation, last success and unavailable/configuration messaging.
+5. Verify actual consent/cancellation, account switching, token expiry/revocation, reconnect after process death and replacement-phone restoration. No real Google account is exercised by the current unit/HTTP tests.
+
+Provider setup needed for real Android acceptance:
+
+- Enable the Drive API in the intended Google Cloud project and complete OAuth branding/consent configuration, including app homepage/privacy/terms and any testing audience.
+- Register an Android OAuth client for package com.moherik.awsemchat and the certificate SHA1 used by the test build. Register the actual release/Play signing certificate separately when appropriate.
+- Use the native on-device authorization flow; no client secret belongs in the app bundle. Backend offline refresh is not currently part of this direct-device backup design.
+- Confirm requested scopes and test-account access before manually invoking consent in the signed-in backup screen. Do not provision an external Google project silently or claim registration from source files alone.
+
+The owner confirmed on 2026-10-12 that Google auth is not configured yet. Keep Drive authorization disabled until the Google Cloud registration and consent requirements above are completed. Local encrypted backup and unrelated messaging work can continue.
+
+Verification: twelve added tests cover scope gating, snapshot token exclusion, explicit cancellation, app changes, disconnect invalidation, obsolete token clearing, lost session accessor, authenticated stable subject lookup, token-free discovery, endpoint origin fences, missing subject/401 and redirect rejection. All192 mobile tests, typecheck, Expo lint and git diff --check pass. These are production state/HTTP component tests with injected authorization and synthetic provider fixtures; native consent and actual Google acceptance are unproven.
+
+Official references checked on2026-10-12: [Android authorization](https://developer.android.com/identity/authorization), [AuthorizationResult](https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationResult), [OpenID discovery/userinfo/subject](https://developers.google.com/identity/openid-connect/openid-connect). The native consent design follows AuthorizationClient rather than a guessed browser callback or deprecated GoogleSignInAccount conversion.
+
+
+Native/UI implementation update (2026-10-12): GoogleDriveAuthorizationModule is registered alongside the existing crypto module. It requests drive.appdata and openid through AuthorizationClient, handles cached authorization or the native pending intent, resolves explicit Activity.RESULT_CANCELED as cancellation, serializes the native prompt owner and rejects on module destruction. SDK exceptions are sanitized and never logged. It currently uses the Expo activity-result callback with startIntentSenderForResult; lifecycle/late-result and provider consent acceptance remain required. No deprecated GoogleSignInAccount conversion is used.
+
+The JS authorizer validates native token/scope shape, strips unrelated fields and exposes no provider diagnostics. Its Android wrapper checks EXPO_PUBLIC_GOOGLE_DRIVE_ENABLED=true before invoking the native module; the flag is a configuration gate, not proof of Google registration. Web/iOS authorization still fails as native-required until supported. Do not enable the flag without registering the package/signing certificate and completing consent/Drive API setup. No client secret or OAuth token was added to environment files.
+
+Account runtime now wires the Google connection, discovered identity endpoint, Expo fetch, public-context namespace fingerprint, native pending vault and Drive upload coordinator. App lifecycle changes clear Google access. Drive archive creation/restoration adds Google token/identity to its transient guards but stores only the public-context fingerprint in pending metadata. Drive restore refreshes displayed history after commit. This remains distinct from SMS account sign-in.
+
+DrivePanel extends the approved backup screen using the existing palette and controls: connect, prepare/resume, recovery-key save checkbox before upload, retry, retain uploaded key until acknowledgement, paginated backup listing, keyed restoration and local disconnect. A local backup key or local operation disables cloud controls. Configuration-unavailable and automatic-backup limitations are explicit. This UI is wired but actual signed-in consent/picker/key entry/account-switch/accessibility/device-provider acceptance is unproven.
+
+Verification: four test-first authorizer tests cover native cancellation, validated token/scope return, malformed input and sanitized SDK failure. All196 mobile tests, TypeScript and Expo lint passed at this checkpoint. ARM64 Android assembleDebug succeeded with the Google dependency. The installed APK reported GOOGLE_NATIVE_BRIDGE_REGISTERED and GOOGLE_CONSENT_NOT_INVOKED; its full synthetic durable/local-file backup probe also passed. These checks prove linkage and regression behavior, not Google grant or provider acceptance. The owner subsequently confirmed that Google auth is not configured yet.

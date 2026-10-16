@@ -6,7 +6,7 @@ User-authorized scope: complete production-intended screens and workflows, using
 2. Welcome, phone verification, profile setup and recovery entry.
 3. Chat list, search, friend requests, PIN profile, Circle creation/member management.
 4. Conversation controls, delivery states/retry, attachments, replies, reactions, Moments creation/detail/deletion.
-5. Sticker collections/editor, Circle stickers/custom emoji.
+5. Sticker collections/editor and Circle stickers. Custom Circle emoji are deferred beyond the MVP; standard emoji reactions remain available.
 6. Profile/settings, privacy/block/report, music permission explanation, backup schedule/export/restore.
 7. Verify complete journeys, narrow viewport/dark mode and native compatibility. Document remaining native-provider work explicitly.
 

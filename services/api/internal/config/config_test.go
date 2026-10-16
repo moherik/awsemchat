@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,52 @@ func TestExplicitDevelopmentModeRequiresLoopbackAndSecret(t *testing.T) {
 				t.Errorf("Load(%s)=%v,want invalid", tt.name, err)
 			}
 		})
+	}
+}
+
+func TestLocalMediaRootMustBeExplicitAndAbsolute(t *testing.T) {
+	values := map[string]string{"AWSEM_AUTH_MODE": "development-mock", "DATABASE_URL": "postgres://localhost/test", "AWSEM_AUTH_PEPPER_HEX": strings.Repeat("42", 32), "AWSEM_MEDIA_LOCAL_ROOT": "/private/tmp/awsem-media"}
+	cfg, err := Load(func(k string) string { return values[k] })
+	if err != nil || cfg.MediaLocalRoot != "/private/tmp/awsem-media" {
+		t.Fatalf("local media config: %+v %v", cfg, err)
+	}
+	values["AWSEM_MEDIA_LOCAL_ROOT"] = "relative"
+	if _, err := Load(func(k string) string { return values[k] }); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("relative root: %v", err)
+	}
+}
+
+func TestSupabaseMediaConfigurationIsCompleteAndExclusive(t *testing.T) {
+	values := map[string]string{
+		"AWSEM_AUTH_MODE":                  "development-mock",
+		"DATABASE_URL":                     "postgres://localhost/test",
+		"AWSEM_AUTH_PEPPER_HEX":            strings.Repeat("42", 32),
+		"AWSEM_MEDIA_SUPABASE_URL":         "https://project.supabase.co",
+		"AWSEM_MEDIA_SUPABASE_SERVICE_KEY": "server-only-key",
+		"AWSEM_MEDIA_SUPABASE_BUCKET":      "private-media",
+	}
+	load := func() (Config, error) { return Load(func(key string) string { return values[key] }) }
+	cfg, err := load()
+	if err != nil {
+		t.Fatalf("Load(complete Supabase media config) = %v", err)
+	}
+	for field, want := range map[string]string{
+		"MediaSupabaseURL":        values["AWSEM_MEDIA_SUPABASE_URL"],
+		"MediaSupabaseServiceKey": values["AWSEM_MEDIA_SUPABASE_SERVICE_KEY"],
+		"MediaSupabaseBucket":     values["AWSEM_MEDIA_SUPABASE_BUCKET"],
+	} {
+		got := reflect.ValueOf(cfg).FieldByName(field)
+		if !got.IsValid() || got.String() != want {
+			t.Errorf("%s = %v, want configured value", field, got)
+		}
+	}
+	values["AWSEM_MEDIA_SUPABASE_SERVICE_KEY"] = ""
+	if _, err := load(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load(partial Supabase config) = %v, want invalid", err)
+	}
+	values["AWSEM_MEDIA_SUPABASE_SERVICE_KEY"] = "server-only-key"
+	values["AWSEM_MEDIA_LOCAL_ROOT"] = "/private/tmp/media"
+	if _, err := load(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load(conflicting media backends) = %v, want invalid", err)
 	}
 }

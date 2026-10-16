@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Pressable, Text } from 'react-native';
+import { router } from 'expo-router';
 import { Page, Copy, Field, usePalette } from '../ui';
 import { showFeedback } from '../feedback/snackbar';
 import { AuthError } from './api';
@@ -40,7 +41,7 @@ export default function AuthenticationScreen() {
       {state.phase === 'code' && <><Copy>Enter the six-digit code for the number ending {state.phone.slice(-4)}.</Copy><Field label="Verification code" value={code} onChange={setCode} keyboardType="number-pad" maxLength={6} />{action('Verify', () => runtime.flow.verify(code), true)}{action('Resend code', () => runtime.flow.resend())}{__DEV__ && action('Fill development code', async () => { setCode(await runtime.developmentCode(state.phone)); showFeedback('Development code filled in.'); })}{action('Change number', () => { runtime.flow.changeNumber(); setCode(''); setPhone(''); })}</>}
       {state.phase === 'preparing' && <><Copy>{state.busy ? 'Preparing encrypted conversations…' : 'Your number is verified. Encryption setup needs another attempt.'}</Copy>{!state.busy && action('Retry encryption setup', () => runtime.flow.retryPreparation(), true)}</>}
       {(state.phase === 'offline' || state.phase === 'locked') && <><Copy>{state.phase === 'offline' ? 'Reconnect to check your saved session before sending messages.' : 'Secure sign-in is locked. Unlock your phone and retry.'}</Copy>{action('Retry saved session', () => runtime.flow.restore(), true)}</>}
-      {state.phase === 'ready' && <><Copy>You’re signed in. Your PIN is {runtime.owner.getSnapshot().account?.pin}.</Copy><Copy muted>Your private-chat and Circle sync is still being connected in this development build.</Copy>{action('Sign out', async () => { await runtime.flow.logout(); setPhone(''); setCode(''); })}</>}
+      {state.phase === 'ready' && <><Copy>Your account is ready. Your PIN is {runtime.owner.getSnapshot().account?.pin}.</Copy><Copy muted>SMS restores account access, but your old messages need an encrypted backup and its recovery key.</Copy><Copy muted>Open Chats to sync your messages and Circles.</Copy>{action('Restore chats from backup', () => router.push({ pathname: '/flow', params: { view: 'backup' } }))}{action('Open chats', () => router.replace('/'), true)}{action('Sign out', async () => { await runtime.flow.logout(); setPhone(''); setCode(''); })}</>}
       {__DEV__ && <Copy muted>Development build: no SMS will be sent. You can fill the temporary code on the verification screen.</Copy>}
     </>}
   </Page>;

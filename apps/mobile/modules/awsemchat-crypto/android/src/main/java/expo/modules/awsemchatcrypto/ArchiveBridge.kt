@@ -14,7 +14,7 @@ internal object ArchiveBridge {
     return ByteArray(32) { value.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
   }
   private fun decodeBase64(value: String): ByteArray {
-    require(value.length <= 524288)
+    require(value.length <= 24 * 1024 * 1024)
     val bytes = Base64.decode(value, Base64.NO_WRAP)
     require(Base64.encodeToString(bytes, Base64.NO_WRAP) == value)
     return bytes
@@ -35,14 +35,14 @@ internal object ArchiveBridge {
     .put("receivedAt", value.receivedAt()).put("payload", value.payload())
 
   fun execute(input: String): String {
-    if (input.length > 600000 || input.toByteArray(Charsets.UTF_8).size > 800000) return "{\"ok\":false,\"code\":\"INPUT_TOO_LARGE\"}"
+    if (input.length > 32 * 1024 * 1024 || input.toByteArray(Charsets.UTF_8).size > 32 * 1024 * 1024) return "{\"ok\":false,\"code\":\"INPUT_TOO_LARGE\"}"
     return try {
       val request = JSONObject(input)
       val result = when (string(request, "op")) {
         "encode" -> {
           requireFields(request, setOf("op", "account", "records"))
           val values = request.getJSONArray("records")
-          require(values.length() <= 128)
+          require(values.length() <= 768)
           val records = (0 until values.length()).map { record(values.getJSONObject(it)) }
           val key = ArchiveCodec.recoveryKey()
           try {

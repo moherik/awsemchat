@@ -101,9 +101,12 @@ internal class DurableStore(private val context: Context, private val prepare: (
   }
   fun execute(namespace: String, input: String): String = synchronized(lock) {
     try {
-      if (input.toByteArray(Charsets.UTF_8).size > 131072) reject("INPUT_TOO_LARGE")
+      val inputBytes = input.toByteArray(Charsets.UTF_8).size
+      if (inputBytes > 8 * 1024 * 1024) reject("INPUT_TOO_LARGE")
+      val operation = JSONObject(input).optString("op")
+      if (inputBytes > 131072 && operation != "importHistory") reject("INPUT_TOO_LARGE")
       val id = identity(namespace)
-      val initialize = JSONObject(input).optString("op") == "initialize"
+      val initialize = operation == "initialize"
       val exists = file(id).exists()
       val hasKey = keystore().containsAlias(alias(id))
       if (initialize && (exists || hasKey)) reject("ALREADY_EXISTS")

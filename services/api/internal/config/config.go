@@ -5,22 +5,41 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"strconv"
 )
 
 var ErrInvalidConfig = errors.New("server configuration missing or unsafe")
 
 type Config struct {
-	Bind        string
-	DatabaseURL string
-	Pepper      []byte
+	Bind                    string
+	DatabaseURL             string
+	Pepper                  []byte
+	MediaLocalRoot          string
+	MediaSupabaseURL        string
+	MediaSupabaseServiceKey string
+	MediaSupabaseBucket     string
 }
 
 func Load(env func(string) string) (Config, error) {
 	if env("AWSEM_AUTH_MODE") != "development-mock" {
 		return Config{}, ErrInvalidConfig
 	}
-	cfg := Config{Bind: env("AWSEM_BIND"), DatabaseURL: env("DATABASE_URL")}
+	cfg := Config{
+		Bind:                    env("AWSEM_BIND"),
+		DatabaseURL:             env("DATABASE_URL"),
+		MediaLocalRoot:          env("AWSEM_MEDIA_LOCAL_ROOT"),
+		MediaSupabaseURL:        env("AWSEM_MEDIA_SUPABASE_URL"),
+		MediaSupabaseServiceKey: env("AWSEM_MEDIA_SUPABASE_SERVICE_KEY"),
+		MediaSupabaseBucket:     env("AWSEM_MEDIA_SUPABASE_BUCKET"),
+	}
+	if cfg.MediaLocalRoot != "" && !filepath.IsAbs(cfg.MediaLocalRoot) {
+		return Config{}, ErrInvalidConfig
+	}
+	supabaseConfigured := cfg.MediaSupabaseURL != "" || cfg.MediaSupabaseServiceKey != "" || cfg.MediaSupabaseBucket != ""
+	if supabaseConfigured && (cfg.MediaSupabaseURL == "" || cfg.MediaSupabaseServiceKey == "" || cfg.MediaSupabaseBucket == "" || cfg.MediaLocalRoot != "") {
+		return Config{}, ErrInvalidConfig
+	}
 	if cfg.Bind == "" {
 		cfg.Bind = "127.0.0.1:8088"
 	}

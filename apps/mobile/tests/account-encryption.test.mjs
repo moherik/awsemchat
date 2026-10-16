@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { accountNamespace, guardAccountOperation } from '../src/security/account-encryption.ts';
+import * as accountEncryption from '../src/security/account-encryption.ts';
 const binding={account:{id:'account-one',pin:'ABCDEFGH'},deviceId:'device-one',generation:1};
 const current={...binding,accessToken:'A'.repeat(43),expiresAt:'2099-01-01T00:00:00Z'};
 const digest=async value=>createHash('sha256').update(value).digest('hex');
@@ -24,4 +25,24 @@ test('retained encryption adapter cannot act for another account or replacement 
 test('logout during native work suppresses the result from a retained adapter',async()=>{
  let value=current;
  await assert.rejects(guardAccountOperation(()=>value,binding,async()=>{value={...current,generation:2};return 'obsolete ciphertext';}),e=>e.code==='SESSION_REVOKED');
+});
+
+test('publication signing derives claims from the bound session and rejects a replaced session',async()=>{
+ assert.equal(typeof accountEncryption.signAccountPublication,'function');
+ const signer=async(operation,claims)=>({operation,...claims});
+ assert.deepEqual(await accountEncryption.signAccountPublication(()=>current,binding,'publication-one',signer),{
+  operation:'publication-one',accountId:'account-one',deviceId:'device-one',generation:1,
+ });
+ await assert.rejects(accountEncryption.signAccountPublication(()=>({...current,generation:2}),binding,'publication-one',async()=>{
+  assert.fail('a replaced session must not reach native signing');
+ }),e=>e.code==='SESSION_REVOKED');
+});
+
+test('publication proof is suppressed if the active session changes while native signing runs',async()=>{
+ assert.equal(typeof accountEncryption.signAccountPublication,'function');
+ let active=current;
+ await assert.rejects(accountEncryption.signAccountPublication(()=>active,binding,'publication-one',async()=>{
+  active={...current,deviceId:'replacement-device'};
+  return {proof:'obsolete-public-proof'};
+ }),e=>e.code==='SESSION_REVOKED');
 });

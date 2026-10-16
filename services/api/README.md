@@ -39,7 +39,7 @@ AWSEM_TEST_DATABASE_URL="$DATABASE_URL" go test -race ./... -count=1
 go vet ./...
 ```
 
-Current verified fixture: PostgreSQL 17, local Docker container `awsemchat-mvp-postgres17`, loopback port 55432. Integration tests cover challenge expiry, replay, attempts, send limits, replacement-session revocation, logout, safe HTTP responses, explicit mock access, concurrent migrations, schema readiness and server shutdown.
+Current verified fixture: PostgreSQL 17, local Docker container `awsemchat-mvp-postgres17`, loopback port 55432. Integration tests cover challenge expiry, replay, attempts, send limits, replacement-session revocation, logout, safe HTTP responses, explicit mock access, concurrent migrations, schema readiness, server shutdown, and an authenticated Circle media upload/read/cancel/delete flow through a local Supabase-compatible HTTP fixture.
 
 ## Social endpoints
 
@@ -51,3 +51,23 @@ Every route requires the current bearer token; actor identity comes from that se
 - `PUT /v1/friends/blocks/<accountId>`: `{ "blocked": true }` or false for unblock.
 
 Requests and responses use no-store caching and safe error codes. Unknown fields, trailing JSON, missing booleans and duplicate/unknown query parameters are rejected. Profile names, statuses and avatars are encrypted client data; the social relay does not supply plaintext profile fields. Circle endpoints and mobile social synchronization are still being implemented.
+
+## Encrypted media
+
+Media routes accept and return only opaque end-to-end encrypted bytes. Private Moment routes require the authenticated sender's currently accepted friendship with the named peer and its fixed `friend:<request-id>` audience. A pending request, block, audience change, or account-generation replacement denies access.
+
+- `PUT /v1/media/private/<peerId>/objects/<objectId>?audience=friend%3A<requestId>&operation=<operationId>` stores immutable ciphertext for the exact operation.
+- `GET /v1/media/private/<peerId>/objects/<objectId>?audience=friend%3A<requestId>` reads while the same friendship audience remains active. For a recipient request, `<peerId>` is the other participant.
+- `POST /v1/media/private/<peerId>/operations/<operationId>/cancel?audience=friend%3A<requestId>` returns `{ "state": "cancelled" }` or the committed event ID. A cancelled operation is fenced from later uploads; its exact uncommitted media is removed by the durable cleanup worker.
+
+The relay accepts ciphertext up to 8 MiB. The app keeps normalized photo plaintext within its 2 MiB limit and protects retry ciphertext locally. Media responses use `Cache-Control: no-store`.
+
+Choose exactly one backend storage adapter. For private Supabase Storage, configure the API process with:
+
+- `AWSEM_MEDIA_SUPABASE_URL`: the project origin, such as `https://<project>.supabase.co`.
+- `AWSEM_MEDIA_SUPABASE_SERVICE_KEY`: a server-only Supabase service key. Never put this value in Expo variables, a mobile bundle, logs, or client configuration.
+- `AWSEM_MEDIA_SUPABASE_BUCKET`: the private bucket name.
+
+Do not set `AWSEM_MEDIA_LOCAL_ROOT` at the same time. The adapter sends only opaque ciphertext to Supabase, uses `x-upsert: false`, accepts an exact retry of an existing object, rejects different bytes at that ID, and removes cancelled objects through the Storage API. The bucket must remain private; API authorization checks happen before reads and writes. The server service key bypasses Storage RLS, so keep access limited to this trusted backend.
+
+For local development without a Supabase project, set `AWSEM_MEDIA_LOCAL_ROOT` to an absolute, service-owned directory instead. Leaving both storage configurations empty keeps media routes disabled. Supabase integration tests use an in-process HTTP fixture and do not contact a project; a real project and bucket are still needed to verify credentials, private-bucket policy and deployment behavior.

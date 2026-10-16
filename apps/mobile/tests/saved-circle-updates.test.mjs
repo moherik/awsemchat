@@ -1,0 +1,19 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+const module=await import('../src/features/social/saved-circle-updates.ts').catch(()=>({}));
+const profile=JSON.stringify({version:1,name:'Home team',description:'Our plans',avatar:null});
+const record={operation:'saved-one',conversation:'former-circle',circle:'former-circle',target:null,event:null,status:'queued',contentType:'circle-profile',profileRevision:2,plaintext:profile};
+function fixture(){let binding='owner',records=[record];const ports={binding:()=>binding,load:async()=>structuredClone(records)};assert.equal(typeof module.createSavedCircleUpdates,'function','saved Circle update discovery missing');return {ports,controller:module.createSavedCircleUpdates(ports),replace:()=>{binding='replacement';},set records(value){records=value;}};}
+test('saved updates discover former Circles from queued native profiles without membership access',async()=>{const f=fixture();f.records=[record,{...record,operation:'sent',status:'sent',event:'event'},{...record,operation:'text',contentType:'text'}];await f.controller.refresh();assert.deepEqual(f.controller.getSnapshot().items,[{circleId:'former-circle',operation:'saved-one',revision:2,name:'Home team'}]);});
+test('malformed or competing saved profiles fail closed without exposing private rows',async()=>{for(const records of [[{...record,target:'peer'}],[{...record,plaintext:'bad'}],[record,{...record,operation:'competing'}],[{...record,circle:'wrong'}],[{...record,profileRevision:0}]]){const f=fixture();f.records=records;await assert.rejects(f.controller.refresh(),/PROFILE_PENDING_INVALID/);assert.deepEqual(f.controller.getSnapshot().items,[]);assert.equal(f.controller.getSnapshot().phase,'error');}});
+test('account transition during discovery suppresses old account names',async()=>{const f=fixture();f.ports.load=async()=>{f.replace();return [record];};await assert.rejects(f.controller.refresh(),/SESSION_CHANGED/);assert.deepEqual(f.controller.getSnapshot().items,[]);});
+test('reset invalidates an in-flight read and storage failures hide previously loaded rows',async()=>{const f=fixture();await f.controller.refresh();let finish;f.ports.load=()=>new Promise(resolve=>{finish=resolve;});const request=f.controller.refresh();f.controller.reset();finish([record]);await request;assert.equal(f.controller.getSnapshot().phase,'idle');assert.deepEqual(f.controller.getSnapshot().items,[]);f.ports.load=async()=>{throw Error('STATE_UNAVAILABLE');};await assert.rejects(f.controller.refresh(),/STATE_UNAVAILABLE/);assert.equal(f.controller.getSnapshot().phase,'error');assert.deepEqual(f.controller.getSnapshot().items,[]);});
+test('a discovered closed Circle opens recovery even when remote details are denied',async()=>{
+ const {createCircleDetails}=await import('../src/features/social/circle-details.ts');
+ const f=fixture();let outgoing=[{...record}];f.ports.load=async()=>structuredClone(outgoing);await f.controller.refresh();
+ const selected=f.controller.getSnapshot().items[0];let resolved;
+ const details=createCircleDetails({account:()=>({id:'owner',binding:'owner'}),operation:()=>{throw Error('must not create new operation');},api:{circle:async()=>{throw Error('DENIED');},context:async()=>{throw Error('must not load context');}},history:async()=>({incoming:[],outgoing:structuredClone(outgoing)}),send:async()=>{throw Error('must not send');},recoverProfile:async draft=>{resolved=draft;outgoing=[];return 'cancelled';}},selected.circleId);
+ await assert.rejects(details.refresh(),/DENIED/);assert.equal(details.getSnapshot().pending.operation,selected.operation);
+ assert.equal(await details.recover(),'cancelled');assert.equal(resolved.operation,'saved-one');assert.equal(resolved.plaintext,profile);
+ await f.controller.refresh();assert.deepEqual(f.controller.getSnapshot().items,[]);
+});

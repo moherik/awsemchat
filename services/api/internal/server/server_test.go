@@ -44,7 +44,7 @@ func TestServerRequiresExplicitMigrationAndServesAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	cfg := config.Config{Bind: "127.0.0.1:8088", Pepper: []byte(strings.Repeat("p", 32))}
+	cfg := config.Config{Bind: "127.0.0.1:8088", Pepper: []byte(strings.Repeat("p", 32)), MediaLocalRoot: t.TempDir() + "/media"}
 	if _, err := New(ctx, pool, cfg); !errors.Is(err, migrations.ErrSchema) {
 		t.Fatalf("unmigrated startup: %v", err)
 	}
@@ -59,6 +59,23 @@ func TestServerRequiresExplicitMigrationAndServesAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	storageFixture := httptest.NewServer(http.NotFoundHandler())
+	defer storageFixture.Close()
+	supabaseCfg := cfg
+	supabaseCfg.MediaLocalRoot = ""
+	supabaseCfg.MediaSupabaseURL = storageFixture.URL
+	supabaseCfg.MediaSupabaseServiceKey = "test-server-only-key"
+	supabaseCfg.MediaSupabaseBucket = "private-media"
+	supabaseServer, err := New(ctx, pool, supabaseCfg)
+	if err != nil {
+		t.Fatalf("New(Supabase media configuration) = %v", err)
+	}
+	mediaRequest := httptest.NewRequest(http.MethodPut, "/v1/media/circles/circle/objects/object?epoch=1", strings.NewReader("opaque"))
+	mediaResponse := httptest.NewRecorder()
+	supabaseServer.Handler.ServeHTTP(mediaResponse, mediaRequest)
+	if mediaResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("Supabase media route status = %d, want unauthorized route response", mediaResponse.Code)
+	}
 	if srv.Addr != "127.0.0.1:8088" || srv.ReadHeaderTimeout <= 0 || srv.ReadTimeout <= 0 || srv.WriteTimeout <= 0 || srv.IdleTimeout <= 0 {
 		t.Fatal("missing bounded server configuration")
 	}
@@ -71,6 +88,17 @@ func TestServerRequiresExplicitMigrationAndServesAuthentication(t *testing.T) {
 	}
 	if w := call(http.MethodGet, "/health/ready", ""); w.Code != 200 {
 		t.Fatalf("ready=%d", w.Code)
+	}
+	if w := call(http.MethodPost, "/v1/keys/publications", `{}`); w.Code != 401 || !strings.Contains(w.Body.String(), "SESSION_REVOKED") {
+		t.Fatalf("key registration route=%d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/v1/messages/context", "/v1/messages", "/v1/reports", "/v1/notifications/device"} {
+		if w := call(http.MethodPost, path, `{}`); w.Code != 401 || !strings.Contains(w.Body.String(), "SESSION_REVOKED") {
+			t.Fatalf("message route=%d %s", w.Code, w.Body.String())
+		}
+	}
+	if w := call(http.MethodPut, "/v1/media/circles/circle/objects/object?epoch=1", "opaque"); w.Code != 401 {
+		t.Fatalf("media route: %d %s", w.Code, w.Body.String())
 	}
 	w := call(http.MethodPost, "/v1/auth/challenges", `{"phone":"+6281234567890","deviceId":"test-device","operationId":"test-op"}`)
 	if w.Code != 202 {

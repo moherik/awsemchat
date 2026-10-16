@@ -35,6 +35,10 @@ func failure(w http.ResponseWriter, err error) {
 		status, code = 409, "CIRCLE_FULL"
 	case errors.Is(err, ErrAdminHandoff):
 		status, code = 409, "ADMIN_HANDOFF_REQUIRED"
+	case errors.Is(err, ErrOperationConflict):
+		status, code = 409, "OPERATION_CONFLICT"
+	case errors.Is(err, ErrMembershipChanged):
+		status, code = 409, "MEMBERSHIP_CHANGED"
 	case errors.Is(err, auth.ErrSessionRevoked):
 		status, code = 401, "SESSION_REVOKED"
 	}
@@ -53,6 +57,32 @@ type principalKey struct{}
 
 func NewHandler(service *Service) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/circles/{circleID}/membership-operations/cancel", func(w http.ResponseWriter, r *http.Request) {
+		var input MembershipMutation
+		if !body(w, r, &input) {
+			failure(w, ErrInvalid)
+			return
+		}
+		result, err := service.CancelMembership(r.Context(), r.Context().Value(principalKey{}).(auth.Principal), r.PathValue("circleID"), input)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, result)
+	})
+	mux.HandleFunc("POST /v1/circles/{circleID}/membership-operations", func(w http.ResponseWriter, r *http.Request) {
+		var input MembershipMutation
+		if !body(w, r, &input) {
+			failure(w, ErrInvalid)
+			return
+		}
+		result, err := service.MutateMembership(r.Context(), r.Context().Value(principalKey{}).(auth.Principal), r.PathValue("circleID"), input)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		respond(w, 200, result)
+	})
 	mux.HandleFunc("GET /v1/circles", func(w http.ResponseWriter, r *http.Request) {
 		cursor, limit, err := paging(r)
 		if err != nil {

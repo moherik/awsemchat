@@ -10,6 +10,8 @@ export type Membership = { intervalId: string; accountId: string; pin: string; r
 export type Details = Circle & { members: Membership[] };
 export type Invitation = { id: string; circleId: string; inviterId: string; inviteeId: string; status: 'pending' };
 export type Page<T> = { items: T[]; nextCursor?: string };
+export type MembershipMutation = Readonly<{ operationId: string; action: 'leave' | 'remove' | 'handoff'; actorInterval: string; expectedEpoch: number; targetId?: string; targetInterval?: string }>;
+export type MembershipResult = { operationId: string; circleId: string; action: MembershipMutation['action']; closed: boolean; cancelled?: boolean };
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 function object(value: unknown): Record<string, unknown> {
@@ -50,7 +52,7 @@ function page<T>(value: unknown, parse: (v: unknown) => T, limit: number, key: (
   if (v.nextCursor !== undefined && (!id(v.nextCursor) || items.length !== limit || v.nextCursor !== (items.length ? key(items[items.length-1]) : undefined))) throw new SocialError('INVALID_RESPONSE');
   return { items, ...(v.nextCursor !== undefined ? { nextCursor: v.nextCursor } : {}) };
 }
-const codes = new Set(['INVALID_INPUT', 'SESSION_REVOKED', 'DENIED', 'CIRCLE_FULL', 'ADMIN_HANDOFF_REQUIRED', 'UNAVAILABLE', 'RATE_LIMITED']);
+const codes = new Set(['INVALID_INPUT', 'SESSION_REVOKED', 'DENIED', 'CIRCLE_FULL', 'ADMIN_HANDOFF_REQUIRED', 'OPERATION_CONFLICT', 'MEMBERSHIP_CHANGED', 'UNAVAILABLE', 'RATE_LIMITED']);
 export function createSocialAPI(baseURL: string, session: () => Session, development = false) {
   let url: URL;
   try { url = new URL(baseURL); } catch { throw new SocialError('CONFIGURATION'); }
@@ -81,7 +83,20 @@ export function createSocialAPI(baseURL: string, session: () => Session, develop
     if ((cursor !== '' && !id(cursor)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new SocialError('INVALID_INPUT');
     return `?cursor=${encodeURIComponent(cursor)}&limit=${limit}`;
   }
+  async function membershipOperation(circleId: string, input: MembershipMutation, cancel = false): Promise<MembershipResult> {
+      requireIDs(circleId, input.operationId, input.actorInterval);
+      if (!positive(input.expectedEpoch) || !['leave', 'remove', 'handoff'].includes(input.action)) throw new SocialError('INVALID_INPUT');
+      if (input.action === 'leave') { if (input.targetId !== undefined || input.targetInterval !== undefined) throw new SocialError('INVALID_INPUT'); }
+      else requireIDs(input.targetId, input.targetInterval);
+      const payload = { operationId: input.operationId, action: input.action, actorInterval: input.actorInterval, expectedEpoch: input.expectedEpoch,
+        ...(input.action === 'leave' ? {} : { targetId: input.targetId, targetInterval: input.targetInterval }) };
+      const result = object(await request(`/v1/circles/${encodeURIComponent(circleId)}/membership-operations${cancel ? "/cancel" : ""}`, 'POST', payload));
+      if (result.operationId !== input.operationId || result.circleId !== circleId || result.action !== input.action || typeof result.closed !== 'boolean' || (result.cancelled !== undefined && typeof result.cancelled !== 'boolean') || (result.cancelled === true && result.closed) || (input.action !== 'leave' && result.closed)) throw new SocialError('INVALID_RESPONSE');
+      return { operationId: input.operationId, circleId, action: input.action, closed: result.closed, ...(result.cancelled === true ? { cancelled: true } : {}) };
+      }
   return {
+    mutateMembership: (circleId: string, input: MembershipMutation) => membershipOperation(circleId, input),
+    cancelMembership: (circleId: string, input: MembershipMutation) => membershipOperation(circleId, input, true),
     async friends(kind: FriendKind = 'accepted', cursor = '', limit = 25): Promise<Page<Contact>> {
       if (!['accepted','incoming','outgoing','blocked'].includes(kind)) throw new SocialError('INVALID_INPUT');
       return page(await request(`/v1/friends${query(cursor,limit)}&kind=${kind}`), value => contact(value,kind),limit, item => item.accountId);
