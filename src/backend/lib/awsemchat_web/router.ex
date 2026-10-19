@@ -22,5 +22,8 @@ defmodule AwsemChatWeb.Router do
     get "/me", MeController, :show
     patch "/me", MeController, :update
     post "/auth/logout", AuthController, :logout
+
+    post "/media", MediaController, :create
+    get "/media/:id", MediaController, :show
   end
 end
