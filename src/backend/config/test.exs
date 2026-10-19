@@ -21,6 +21,10 @@ config :awsemchat, AwsemChatWeb.Endpoint,
   secret_key_base: "Tve0wm5vQuVOKD90dHUPifTRfzkJDti5HdiqwKuUFARfdPKIats4udFEG51f0xl+",
   server: false
 
+config :awsemchat, :otp,
+  provider: AwsemChat.Accounts.DevOtp,
+  ttl_seconds: 1
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

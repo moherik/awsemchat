@@ -10,7 +10,11 @@ import Config
 config :awsemchat,
   namespace: AwsemChat,
   ecto_repos: [AwsemChat.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime, binary_id: true]
+
+config :awsemchat, :otp,
+  provider: AwsemChat.Accounts.DevOtp,
+  ttl_seconds: 300
 
 # Configures the endpoint
 config :awsemchat, AwsemChatWeb.Endpoint,

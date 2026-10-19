@@ -10,6 +10,7 @@ defmodule AwsemChat.Application do
     children = [
       AwsemChatWeb.Telemetry,
       AwsemChat.Repo,
+      AwsemChat.Accounts.DevOtp,
       {DNSCluster, query: Application.get_env(:awsemchat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: AwsemChat.PubSub},
       # Start a worker by calling: AwsemChat.Worker.start_link(arg)
