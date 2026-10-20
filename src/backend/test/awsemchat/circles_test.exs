@@ -253,6 +253,62 @@ defmodule AwsemChat.CirclesTest do
     assert {:error, :not_found} = Circles.update(alice, "not-a-uuid", %{"name" => "x"})
   end
 
+  test "test_rejoin_reactivates_membership_and_hides_old_history", %{
+    alice: alice,
+    bob: bob
+  } do
+    assert {:ok, request} = Social.request_by_pin(alice, bob.pin)
+    assert {:ok, _} = Social.respond(bob, request.id, :accept)
+
+    assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+    assert {:ok, _results} = Circles.invite(alice, circle.id, [bob.id])
+    inv = Repo.get_by!(CircleInvitation, circle_id: circle.id, invitee_id: bob.id)
+    assert {:ok, _} = Circles.respond(bob, inv.id, :accept)
+
+    # A message Bob could see while he was a member.
+    {:ok, visible_msg} =
+      Chat.send_message(alice, circle.id, message_attrs(%{payload: %{"v" => 1, "text" => "hi"}}))
+
+    assert {:ok, %{messages: messages}} = Chat.list_messages(bob, circle.id, %{})
+    assert Enum.any?(messages, &(&1.id == visible_msg.id))
+
+    assert :ok = Circles.leave(bob, circle.id)
+
+    # Re-invite and accept: the old `:left` row is reactivated, no insert! raises.
+    assert {:ok, results} = Circles.invite(alice, circle.id, [bob.id])
+    assert results[bob.id] == :ok
+    reinv = fetch_latest_invitation(circle.id, bob.id)
+    assert {:ok, _membership} = Circles.respond(bob, reinv.id, :accept)
+
+    # Back in the circle, but the pre-rejoin message is hidden by the refreshed
+    # join boundary.
+    assert {:ok, %{messages: after_rejoin}} = Chat.list_messages(bob, circle.id, %{})
+    refute Enum.any?(after_rejoin, &(&1.id == visible_msg.id))
+
+    assert {:ok, %{conversations: list}} = Chat.list_conversations(bob, %{filter: :all})
+    [conv] = Enum.filter(list, fn c -> c.id == circle.id end)
+    assert conv.unread_count == 0
+    assert conv.last_message == nil
+
+    # And only one membership row exists for the pair.
+    assert Repo.aggregate(
+             from(m in AwsemChat.Chat.CircleMembership,
+               where: m.circle_id == ^circle.id and m.user_id == ^bob.id
+             ),
+             :count
+           ) == 1
+  end
+
+  defp fetch_latest_invitation(circle_id, invitee_id) do
+    Repo.one!(
+      from(i in CircleInvitation,
+        where: i.circle_id == ^circle_id and i.invitee_id == ^invitee_id,
+        order_by: [desc: i.inserted_at, desc: i.id],
+        limit: 1
+      )
+    )
+  end
+
   defp get_pending_request_id(recipient, sender) do
     req =
       Repo.get_by!(AwsemChat.Social.FriendRequest,

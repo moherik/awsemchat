@@ -270,6 +270,12 @@ defmodule AwsemChat.Circles do
       else
         now = DateTime.utc_now()
 
+        # A former member (`:left`/`:removed`) still occupies the row under the
+        # unique `(circle_id, user_id)` index, so a plain insert would raise.
+        # Reactivate that row instead, refreshing `joined_at` to now: the join
+        # boundary (`created_at >= joined_at`) then hides everything sent
+        # before the rejoin, exactly as for a first-time joiner. Design §5's
+        # "new row" reads as "a new active membership", not a second row.
         membership =
           %CircleMembership{}
           |> CircleMembership.create_changeset(%{
@@ -277,9 +283,18 @@ defmodule AwsemChat.Circles do
             user_id: user.id,
             role: :member,
             state: :active,
-            joined_at: now
+            joined_at: now,
+            left_at: nil
           })
-          |> Repo.insert!()
+          |> Repo.insert(
+            on_conflict: {:replace, [:role, :state, :joined_at, :left_at]},
+            conflict_target: [:circle_id, :user_id],
+            returning: true
+          )
+          |> case do
+            {:ok, membership} -> membership
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
 
         invitation
         |> CircleInvitation.state_changeset(:accepted)
