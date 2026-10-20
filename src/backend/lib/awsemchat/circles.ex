@@ -105,6 +105,27 @@ defmodule AwsemChat.Circles do
     end
   end
 
+  @doc """
+  The circle's own profile as `actor` may see it.
+
+  Only an active member may read a circle's profile — the same rule every other
+  circle read applies, so a stranger cannot discover a circle's name,
+  description or avatar by id. An unknown circle is `:not_found`; a circle the
+  caller is not in is `:not_member`.
+  """
+  def get(%User{} = actor, circle_id) do
+    case get_circle_conversation(circle_id) do
+      nil ->
+        {:error, :not_found}
+
+      %Conversation{} = conversation ->
+        case get_membership(conversation.id, actor.id) do
+          %CircleMembership{} -> {:ok, conversation}
+          nil -> {:error, :not_member}
+        end
+    end
+  end
+
   def list_members(%User{} = actor, circle_id) do
     case get_circle_conversation(circle_id) do
       nil ->

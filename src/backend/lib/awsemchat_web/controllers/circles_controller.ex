@@ -1,6 +1,6 @@
 defmodule AwsemChatWeb.CirclesController do
   @moduledoc """
-  Circles over REST: create, update, invite, answer an invitation, leave,
+  Circles over REST: create, show, update, invite, answer an invitation, leave,
   remove a member, list members.
 
   Every rule lives in `AwsemChat.Circles`; this module translates params into
@@ -25,8 +25,13 @@ defmodule AwsemChatWeb.CirclesController do
   end
 
   def show(conn, %{"id" => id}) do
-    # simple
-    conn |> json(%{id: id})
+    case Circles.get(conn.assigns.current_user, id) do
+      {:ok, circle} ->
+        json(conn, %{circle: CircleJSON.data(circle)})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
+    end
   end
 
   def update(conn, %{"id" => id} = params) do

@@ -25,6 +25,59 @@ defmodule AwsemChatWeb.CirclesControllerTest do
     %{alice: alice, bob: bob, carol: carol, conversation: conversation}
   end
 
+  test "GET /api/v1/circles/:id renders the profile to a member", %{alice: alice} do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad", description: "the team"})
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/#{circle.id}")
+      |> json_response(200)
+
+    assert body["circle"]["id"] == circle.id
+    assert body["circle"]["type"] == "circle"
+    assert body["circle"]["name"] == "Squad"
+    assert body["circle"]["description"] == "the team"
+    assert body["circle"]["createdBy"] == alice.id
+  end
+
+  test "GET /api/v1/circles/:id as a non-member is 403 not_member", %{
+    alice: alice,
+    carol: carol
+  } do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    body =
+      build_conn()
+      |> authenticate(carol.token)
+      |> get("/api/v1/circles/#{circle.id}")
+      |> json_response(403)
+
+    assert body == %{"error" => %{"code" => "not_member"}}
+  end
+
+  test "GET /api/v1/circles/:id on an unknown circle is 404 not_found", %{alice: alice} do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/#{Ecto.UUID.generate()}")
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+  end
+
+  test "GET /api/v1/circles/:id with a non-uuid id is 404 not_found, not a 500", %{
+    alice: alice
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/not-a-uuid")
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+  end
+
   test "POST /api/v1/circles creates a circle", %{alice: alice} do
     body =
       build_conn()
