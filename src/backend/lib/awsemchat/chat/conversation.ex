@@ -67,4 +67,10 @@ defmodule AwsemChat.Chat.Conversation do
     |> foreign_key_constraint(:created_by)
     |> unique_constraint(:private_key)
   end
+
+  def changeset(conversation, attrs) do
+    conversation
+    |> cast(attrs, [:type, :name, :description, :avatar_media_id, :private_key, :created_by])
+    |> validate_required([:type])
+  end
 end

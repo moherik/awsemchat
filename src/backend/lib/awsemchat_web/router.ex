@@ -40,5 +40,15 @@ defmodule AwsemChatWeb.Router do
     post "/conversations", ConversationsController, :create
     get "/conversations/:conversationId/messages", ConversationsController, :list_messages
     post "/conversations/:conversationId/messages", ConversationsController, :send_message
+
+    post "/circles", CirclesController, :create
+    get "/circles/:id", CirclesController, :show
+    patch "/circles/:id", CirclesController, :update
+    post "/circles/:id/invitations", CirclesController, :invite
+    post "/invitations/:id/accept", CirclesController, :accept_invitation
+    post "/invitations/:id/decline", CirclesController, :decline_invitation
+    post "/circles/:id/leave", CirclesController, :leave
+    delete "/circles/:id/members/:userId", CirclesController, :remove_member
+    get "/circles/:id/members", CirclesController, :list_members
   end
 end

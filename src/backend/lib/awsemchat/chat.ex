@@ -21,7 +21,7 @@ defmodule AwsemChat.Chat do
   import Ecto.Query
 
   alias AwsemChat.Accounts.User
-  alias AwsemChat.Chat.{Broadcast, Conversation, Delivery, Message}
+  alias AwsemChat.Chat.{Broadcast, CircleMembership, Conversation, Delivery, Message}
   alias AwsemChat.Media
   alias AwsemChat.Repo
   alias AwsemChat.Social
@@ -85,7 +85,7 @@ defmodule AwsemChat.Chat do
   """
   def list_messages(%User{} = user, conversation_id, opts \\ %{}) do
     with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id),
-         {:ok, query} <- cursor_query(conversation, opts) do
+         {:ok, query} <- cursor_query(conversation, user, opts) do
       limit = page_limit(opts)
 
       messages = Repo.all(from(m in query, limit: ^(limit + 1)))
@@ -99,12 +99,29 @@ defmodule AwsemChat.Chat do
     end
   end
 
-  defp cursor_query(conversation, opts) do
-    from(m in Message,
-      where: m.conversation_id == ^conversation.id,
-      order_by: [desc: m.created_at, desc: m.id]
-    )
-    |> apply_cursor(opts)
+  defp cursor_query(conversation, user, opts) do
+    query =
+      from(m in Message,
+        where: m.conversation_id == ^conversation.id,
+        order_by: [desc: m.created_at, desc: m.id]
+      )
+
+    query =
+      case conversation.type do
+        :circle ->
+          case get_active_membership(conversation.id, user.id) do
+            %CircleMembership{joined_at: joined_at} when not is_nil(joined_at) ->
+              from(m in query, where: m.created_at >= ^joined_at)
+
+            _ ->
+              from(m in query, where: false)
+          end
+
+        _ ->
+          query
+      end
+
+    query |> apply_cursor(opts)
   end
 
   @doc """
@@ -422,13 +439,10 @@ defmodule AwsemChat.Chat do
     end
   end
 
-  # TODO(Task 6): require an active circle membership once circle_memberships
-  # exists; until then a circle has no members beyond its sender.
   defp circle_send_authorization(sender, conversation) do
-    if sender.id in circle_members(conversation.id) do
-      :ok
-    else
-      {:error, :not_member}
+    case get_active_membership(conversation.id, sender.id) do
+      %CircleMembership{} -> :ok
+      nil -> {:error, :not_member}
     end
   end
 
@@ -600,8 +614,14 @@ defmodule AwsemChat.Chat do
 
   defp visible?(user, conversation) do
     case Conversation.participant_ids(conversation) do
-      nil -> user.id in circle_members(conversation.id)
-      [a, b] -> user.id in [a, b]
+      nil ->
+        case get_active_membership(conversation.id, user.id) do
+          %CircleMembership{} -> true
+          nil -> false
+        end
+
+      [a, b] ->
+        user.id in [a, b]
     end
   end
 
@@ -674,9 +694,18 @@ defmodule AwsemChat.Chat do
     end
   end
 
-  # Circle membership is Task 6's table; until it exists this is empty, which
-  # makes a circle visible only to its creator.
-  defp circle_members(_circle_id), do: []
+  defp circle_members(circle_id) do
+    Repo.all(
+      from(m in CircleMembership,
+        where: m.circle_id == ^circle_id and m.state == :active,
+        select: m.user_id
+      )
+    )
+  end
+
+  defp get_active_membership(circle_id, user_id) do
+    Repo.get_by(CircleMembership, circle_id: circle_id, user_id: user_id, state: :active)
+  end
 
   defp fetch_attr(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, to_string(key))
 end
