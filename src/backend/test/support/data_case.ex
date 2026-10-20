@@ -24,6 +24,7 @@ defmodule AwsemChat.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import AwsemChat.DataCase
+      import AwsemChat.MediaStorageCase
     end
   end
 

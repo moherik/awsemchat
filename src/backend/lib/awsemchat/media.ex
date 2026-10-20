@@ -66,9 +66,13 @@ defmodule AwsemChat.Media do
   Records that a message references this media, capturing the audience that may
   read it.
 
-  `user_ids` is every participant who could see the message when it was sent
-  (the sender plus intended recipients). Called by Chat; until then no
-  references exist and `authorized?/2` is owner-only.
+  `user_ids` is the server-computed recipient set for the conversation, captured
+  at send time — the sender plus the intended recipients. It is the sole source
+  of access widening in `authorized?/2`, so it must never be built from
+  client-supplied ids: an arbitrary id here grants that account read access to
+  the media. Only the Chat context calls this, and it passes a set it computed
+  itself. Until Chat starts recording references in Task 4 no references exist
+  and `authorized?/2` is owner-only.
   """
   def record_message_reference(%{
         media_id: media_id,
@@ -126,9 +130,16 @@ defmodule AwsemChat.Media do
   defp limit, do: config(:limit, @default_limit)
   defp allowed_mime, do: config(:allowed_mime, @default_allowed_mime)
 
+  # Process-local settings win over application env, then the default. Tests set
+  # these in their own process: concurrent test modules share app env, so a
+  # global override would leak one test's limit, allow-list or store into
+  # another's assertions. Production sets nothing and reads the defaults.
   defp config(key, default) do
-    :awsemchat
-    |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(key, default)
+    configured =
+      :awsemchat
+      |> Application.get_env(__MODULE__, [])
+      |> Keyword.get(key, default)
+
+    Process.get({__MODULE__, key}, configured)
   end
 end

@@ -1,5 +1,5 @@
 defmodule AwsemChatWeb.MediaControllerTest do
-  use AwsemChatWeb.ConnCase, async: false
+  use AwsemChatWeb.ConnCase, async: true
 
   alias AwsemChat.Accounts
   alias AwsemChat.Media
@@ -11,18 +11,7 @@ defmodule AwsemChatWeb.MediaControllerTest do
   @pdf "%PDF-1.4"
 
   setup do
-    Application.put_env(:awsemchat, Media,
-      limit: @test_limit,
-      allowed_mime: ["image/png"],
-      store: LocalStore
-    )
-
-    LocalStore.clear()
-
-    on_exit(fn ->
-      Application.delete_env(:awsemchat, Media)
-      LocalStore.clear()
-    end)
+    isolate_media_storage(limit: @test_limit, allowed_mime: ["image/png"], store: LocalStore)
 
     {:ok, owner: create_user("+15550002001"), stranger: create_user("+15550002002")}
   end
@@ -80,15 +69,10 @@ defmodule AwsemChatWeb.MediaControllerTest do
     assert conn.status == 200
     assert IO.iodata_to_binary(conn.resp_body) == @png
     assert get_resp_header(conn, "content-type") == ["image/png"]
-    assert get_resp_header(conn, "content-length") == [Integer.to_string(byte_size(@png))]
   end
 
   test "GET /api/v1/media/:id streams a file larger than one chunk intact", %{owner: owner} do
-    Application.put_env(:awsemchat, Media,
-      limit: 10 * 1024 * 1024,
-      allowed_mime: ["image/png"],
-      store: LocalStore
-    )
+    Process.put({Media, :limit}, 10 * 1024 * 1024)
 
     # Bigger than the controller's 64 KB read size, so the copy really is chunked.
     big = :binary.copy(<<0xAB, 0xCD, 0xEF, 0x01>>, 40_000)

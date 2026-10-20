@@ -1,5 +1,5 @@
 defmodule AwsemChat.MediaTest do
-  use AwsemChat.DataCase, async: false
+  use AwsemChat.DataCase, async: true
 
   alias AwsemChat.Accounts
   alias AwsemChat.Media
@@ -10,15 +10,9 @@ defmodule AwsemChat.MediaTest do
   @test_limit 64
 
   setup do
-    put_media_env(limit: @test_limit, allowed_mime: ["image/png"])
-    LocalStore.clear()
+    isolate_media_storage(limit: @test_limit, allowed_mime: ["image/png"], store: LocalStore)
 
     owners = %{owner: create_user("+15550001001"), stranger: create_user("+15550001002")}
-
-    on_exit(fn ->
-      put_media_env([])
-      LocalStore.clear()
-    end)
 
     {:ok, owners}
   end
@@ -150,8 +144,4 @@ defmodule AwsemChat.MediaTest do
   end
 
   defp png, do: <<0x89, "PNG\r\n", 0x1A, "\n">> <> :binary.copy(<<0>>, 8)
-
-  defp put_media_env(opts) do
-    Application.put_env(:awsemchat, Media, Keyword.merge([store: LocalStore], opts))
-  end
 end

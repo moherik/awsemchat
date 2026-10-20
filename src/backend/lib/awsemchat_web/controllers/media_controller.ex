@@ -44,7 +44,6 @@ defmodule AwsemChatWeb.MediaController do
       {:ok, device} ->
         conn
         |> put_resp_header("content-type", media.mime)
-        |> put_resp_header("content-length", Integer.to_string(media.byte_size))
         |> send_chunked(200)
         |> stream_body(device)
 

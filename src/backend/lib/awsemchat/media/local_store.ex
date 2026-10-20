@@ -50,8 +50,22 @@ defmodule AwsemChat.Media.LocalStore do
     :ok
   end
 
-  @doc false
-  def root, do: Application.app_dir(:awsemchat, "priv/media")
+  @doc """
+  The directory objects are stored under.
+
+  Resolution order, most specific first:
+
+    1. `:media_root` in this process's dictionary — how a test points the store
+       at its own scratch directory without mutating global application state
+       (async tests share the app env, so a global override races).
+    2. `config :awsemchat, :media_root` — an application-level override.
+    3. `priv/media` under the app — the production default.
+  """
+  def root do
+    Process.get(:media_root) || Application.get_env(:awsemchat, :media_root, default_root())
+  end
+
+  defp default_root, do: Application.app_dir(:awsemchat, "priv/media")
 
   defp key, do: Ecto.UUID.generate()
 

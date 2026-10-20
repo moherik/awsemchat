@@ -29,6 +29,8 @@ defmodule AwsemChat.Repo.Migrations.CreateMedia do
 
     create index(:message_media, [:media_id])
     create index(:message_media, [:message_id])
+    create index(:message_media, [:conversation_id])
+    create index(:message_media, [:user_ids], using: :gin)
     create unique_index(:message_media, [:media_id, :message_id])
   end
 end

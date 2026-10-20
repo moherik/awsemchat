@@ -28,6 +28,7 @@ defmodule AwsemChatWeb.ConnCase do
       import Plug.Conn
       import Phoenix.ConnTest
       import AwsemChatWeb.ConnCase
+      import AwsemChat.MediaStorageCase
     end
   end
 
