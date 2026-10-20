@@ -40,15 +40,32 @@ defmodule AwsemChat.Reactions do
           {:ok, nil}
 
         reaction ->
-          Repo.delete(reaction)
-          {:ok, reaction}
+          case Repo.delete(reaction) do
+            {:ok, deleted} ->
+              broadcast_change(deleted.target_type, deleted.target_id, deleted.user_id)
+              {:ok, deleted}
+
+            other ->
+              other
+          end
       end
     else
       _ -> {:error, :not_found}
     end
   end
 
-  def list_for(target_type, ids) when is_list(ids) do
+  @doc """
+  Reaction aggregates for `ids` of `target_type`, restricted to what `user` may
+  see.
+
+  A reaction is not more readable than its target: each id is checked with the
+  same visibility rule the write path applies (`ensure_target_visible/3`), so a
+  late joiner does not receive aggregates for prejoin messages and a non-member
+  receives nothing for a conversation they cannot read. Ids the caller may not
+  see are simply absent from the result — there is no per-id error to tell an
+  invisible target from a non-existent one.
+  """
+  def list_for(%User{} = user, target_type, ids) when is_list(ids) do
     case normalize_target_type(target_type) do
       {:ok, target_type} ->
         uuids =
@@ -59,15 +76,20 @@ defmodule AwsemChat.Reactions do
             end
           end)
 
-        if uuids == [] do
+        visible_uuids =
+          Enum.filter(uuids, fn id ->
+            match?({:ok, _}, ensure_target_visible(user, target_type, id))
+          end)
+
+        if visible_uuids == [] do
           %{}
         else
           query =
-            from(r in Reaction, where: r.target_type == ^target_type and r.target_id in ^uuids)
+            from(r in Reaction,
+              where: r.target_type == ^target_type and r.target_id in ^visible_uuids
+            )
 
-          rows = Repo.all(query)
-
-          rows
+          Repo.all(query)
           |> Enum.group_by(& &1.target_id)
           |> Enum.into(%{}, fn {tid, rs} ->
             {to_string(tid), Enum.map(rs, fn r -> %{emoji: r.emoji, userId: r.user_id} end)}
@@ -163,10 +185,20 @@ defmodule AwsemChat.Reactions do
       nil ->
         {:error, :not_found}
 
-      %Message{conversation_id: conversation_id} ->
+      %Message{conversation_id: conversation_id} = message ->
         case Chat.get_conversation(user, conversation_id) do
-          %Conversation{} -> {:ok, target_id}
-          nil -> {:error, :not_found}
+          %Conversation{} ->
+            # Membership alone is not enough in a circle: the same join boundary
+            # the chat reads apply (a late joiner may not react to a prejoin
+            # message). Private conversations have no boundary.
+            if visible_at_join_boundary?(user, conversation_id, message.created_at) do
+              {:ok, target_id}
+            else
+              {:error, :not_found}
+            end
+
+          nil ->
+            {:error, :not_found}
         end
     end
   end
@@ -179,7 +211,7 @@ defmodule AwsemChat.Reactions do
       %Moment{conversation_id: conversation_id} = moment ->
         case get_conversation_for_moment(user, conversation_id) do
           {:ok, _conversation} ->
-            if visible_at_join_boundary?(user, conversation_id, moment) do
+            if visible_at_join_boundary?(user, conversation_id, moment.created_at) do
               {:ok, target_id}
             else
               {:error, :not_found}
@@ -208,7 +240,7 @@ defmodule AwsemChat.Reactions do
     end
   end
 
-  defp visible_at_join_boundary?(user, conversation_id, %Moment{created_at: created_at}) do
+  defp visible_at_join_boundary?(user, conversation_id, created_at) do
     conversation = fetch_conversation(conversation_id)
 
     case conversation && conversation.type do

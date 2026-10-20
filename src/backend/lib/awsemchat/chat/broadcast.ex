@@ -83,7 +83,7 @@ defmodule AwsemChat.Chat.Broadcast do
     |> Enum.each(
       &broadcast(&1, "reaction:changed", %{
         conversationId: conversation_id,
-        targetType: target_type,
+        targetType: to_string(target_type),
         targetId: target_id
       })
     )
