@@ -323,8 +323,7 @@ defmodule AwsemChat.CirclesTest do
   defp fetch_latest_invitation(circle_id, invitee_id) do
     Repo.one!(
       from(i in CircleInvitation,
-        where:
-          i.circle_id == ^circle_id and i.invitee_id == ^invitee_id and i.state == :pending,
+        where: i.circle_id == ^circle_id and i.invitee_id == ^invitee_id and i.state == :pending,
         order_by: [desc: i.inserted_at, desc: i.id],
         limit: 1
       )

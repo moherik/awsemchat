@@ -15,16 +15,8 @@ defmodule AwsemChat.Reactions do
   alias AwsemChat.Reactions.Reaction
   alias AwsemChat.Repo
 
-  def set(%User{} = user, target_type, target_id, emoji) when is_atom(target_type) do
+  def set(%User{} = user, target_type, target_id, emoji) do
     with {:ok, target_type} <- normalize_target_type(target_type),
-         {:ok, target_id} <- normalize_uuid(target_id),
-         {:ok, _} <- ensure_target_visible(user, target_type, target_id) do
-      do_set(user, target_type, target_id, to_string(emoji))
-    end
-  end
-
-  def set(%User{} = user, target_type, target_id, emoji) when is_binary(target_type) do
-    with {:ok, target_type} <- normalize_target_type_string(target_type),
          {:ok, target_id} <- normalize_uuid(target_id),
          {:ok, _} <- ensure_target_visible(user, target_type, target_id) do
       do_set(user, target_type, target_id, to_string(emoji))
@@ -160,11 +152,9 @@ defmodule AwsemChat.Reactions do
 
   defp normalize_target_type(:message), do: {:ok, :message}
   defp normalize_target_type(:moment), do: {:ok, :moment}
+  defp normalize_target_type("message"), do: {:ok, :message}
+  defp normalize_target_type("moment"), do: {:ok, :moment}
   defp normalize_target_type(_), do: :error
-
-  defp normalize_target_type_string("message"), do: {:ok, :message}
-  defp normalize_target_type_string("moment"), do: {:ok, :moment}
-  defp normalize_target_type_string(_), do: :error
 
   defp normalize_uuid(id) when is_binary(id) do
     Ecto.UUID.cast(id)

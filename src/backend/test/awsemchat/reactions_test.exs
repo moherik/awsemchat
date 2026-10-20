@@ -94,7 +94,11 @@ defmodule AwsemChat.ReactionsTest do
 
     # A message after the join is fair game.
     {:ok, postjoin} =
-      Chat.send_message(alice, circle.id, message_attrs(%{payload: %{"v" => 1, "text" => "post"}}))
+      Chat.send_message(
+        alice,
+        circle.id,
+        message_attrs(%{payload: %{"v" => 1, "text" => "post"}})
+      )
 
     assert {:ok, _} = Reactions.set(bob, :message, postjoin.id, "👍")
   end

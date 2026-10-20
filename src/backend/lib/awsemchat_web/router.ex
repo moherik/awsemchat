@@ -63,5 +63,14 @@ defmodule AwsemChatWeb.Router do
     post "/circles/:id/leave", CirclesController, :leave
     delete "/circles/:id/members/:userId", CirclesController, :remove_member
     get "/circles/:id/members", CirclesController, :list_members
+
+    post "/conversations/:conversationId/moments", MomentsController, :create
+    get "/conversations/:conversationId/moments", MomentsController, :list
+    post "/conversations/:conversationId/moments/promote", MomentsController, :promote
+    delete "/moments/:id", MomentsController, :delete
+
+    get "/reactions/:targetType", ReactionsController, :index
+    put "/reactions/:targetType/:targetId", ReactionsController, :set
+    delete "/reactions/:targetType/:targetId", ReactionsController, :unset
   end
 end
