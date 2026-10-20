@@ -57,6 +57,23 @@ defmodule AwsemChat.Chat do
   end
 
   @doc """
+  The conversation row for `conversation_id` regardless of visibility, or `nil`.
+
+  Used by callers that must distinguish "does not exist" (`:not_found`) from
+  "exists but is not yours" (`:not_member`) — see `classify_missing/1`.
+  """
+  def get_conversation_row(conversation_id), do: fetch_conversation(conversation_id)
+
+  @doc "The other participant of a private conversation as seen by `viewer_id`."
+  def peer_id(%Conversation{} = conversation, viewer_id) do
+    case Conversation.participant_ids(conversation) do
+      [a, b] when a == viewer_id -> b
+      [a, b] when b == viewer_id -> a
+      _ -> nil
+    end
+  end
+
+  @doc """
   Sends `attrs` into `conversation_id` on behalf of `sender`.
 
   `attrs` is the wire map: `:clientOpId`, `:kind`, `:payload`, `:mediaIds`,
@@ -749,23 +766,21 @@ defmodule AwsemChat.Chat do
     end
   end
 
+  @doc """
+  Records where `user` has read up to in `conversation_id`.
+
+  The id must name a message **in that conversation**. A position may only move
+  a viewer's own read mark inside the conversation they are reading, so a
+  message from another conversation — readable or not — is refused with
+  `:not_found`. Without this check a client could point at a message in a
+  different conversation and silently zero (or worse, latch) the conversation's
+  unread count, because the count resolves the id to a timestamp.
+
+  `nil` clears the position (unread again from the top of the window).
+  """
   def put_position(%User{} = user, conversation_id, message_id) do
-    with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id) do
-      last_seen_message_id =
-        case message_id do
-          nil ->
-            nil
-
-          id when is_binary(id) ->
-            case Ecto.UUID.cast(id) do
-              {:ok, uuid} -> uuid
-              :error -> id
-            end
-
-          id ->
-            id
-        end
-
+    with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id),
+         {:ok, last_seen_message_id} <- resolve_position(conversation, message_id) do
       params = %{
         conversation_id: conversation.id,
         user_id: user.id,
@@ -788,56 +803,184 @@ defmodule AwsemChat.Chat do
     end
   end
 
+  # `nil` is a legitimate "no position". Anything else must be a message in this
+  # conversation: same id space, same audience. A non-UUID or a UUID that names
+  # nothing here is `:not_found`, which the route layer maps to 404.
+  defp resolve_position(_conversation, nil), do: {:ok, nil}
+
+  defp resolve_position(conversation, message_id) do
+    case message_in_conversation(conversation.id, message_id) do
+      %Message{id: id} -> {:ok, id}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  defp message_in_conversation(conversation_id, message_id) do
+    case Ecto.UUID.cast(message_id) do
+      {:ok, uuid} ->
+        Repo.one(
+          from(m in Message,
+            where: m.id == ^uuid and m.conversation_id == ^conversation_id
+          )
+        )
+
+      :error ->
+        nil
+    end
+  end
+
+  @doc """
+  Lists the conversations `user` may see, pinned first, newest activity last.
+
+  Options:
+
+  - `:filter` — `:all | :private | :circles` (default `:all`)
+  - `:includeArchived` — archived rows are hidden unless truthy (default off)
+  - `:cursor` — an opaque cursor from a previous page (see below)
+  - `:limit` — page size (default #{@default_page}, capped at #{@max_page})
+
+  Ordering is deterministic: pinned first, then `pinOrder` ascending, then the
+  most recent message time descending, then `id` ascending as a final stable
+  tiebreak. Without that final key two rows with the same `pinOrder` (or no
+  messages at all) could come back in either order, so paging would be unstable.
+
+  The cursor is opaque and names the last row's `(sort_key, id)`; pass it back as
+  `:cursor` to fetch the next page. A cursor this server did not mint is
+  `:invalid_cursor`.
+
+  Errors: none for an empty list; `:invalid_cursor` for a bad cursor.
+  """
   def list_conversations(%User{} = user, opts \\ %{}) do
-    filter = opts[:filter] || opts["filter"] || :all
-    include_archived? = truthy?(opts[:includeArchived] || opts["includeArchived"])
-    cursor = opts[:cursor] || opts["cursor"]
+    filter = fetch_attr(opts, :filter) || :all
+    include_archived? = truthy?(fetch_attr(opts, :includeArchived))
+    limit = page_limit(opts)
 
     conversations = all_visible_conversations(user)
+
+    state = load_viewer_state(user, conversations)
 
     conversations =
       conversations
       |> filter_by_type(filter)
-      |> Enum.map(fn conv -> build_conversation_row(user, conv) end)
-      |> Enum.filter(fn row ->
-        if include_archived? do
-          true
-        else
-          pref = row.preferences || %{}
-          archived = pref.archived || pref["archived"] || pref[:archived?] || false
-          not archived
-        end
-      end)
-      |> Enum.sort_by(
-        fn row ->
-          pinned =
-            get_in(row, [:preferences, :pinned]) || get_in(row, [:preferences, :pinned?]) || false
+      |> exclude_archived(state, include_archived?)
+      |> Enum.map(&build_conversation_row(user, &1, state))
+      |> Enum.sort_by(&sort_key/1)
 
-          pin_order =
-            get_in(row, [:preferences, :pin_order]) || get_in(row, [:preferences, :pinOrder]) || 0
+    with {:ok, page, rest} <- paginate(conversations, limit, fetch_attr(opts, :cursor)) do
+      {:ok, %{conversations: page, nextCursor: list_next_cursor(page, rest)}}
+    end
+  end
 
-          {if(pinned, do: 0, else: 1), pin_order}
-        end,
-        :asc
-      )
+  # The viewer's preferences and positions for every listed conversation, in two
+  # queries instead of one pair per row.
+  defp load_viewer_state(%User{} = user, conversations) do
+    ids = Enum.map(conversations, & &1.id)
 
-    # Basic cursor pagination - if cursor provided, could filter; tests don't seem to require complex cursor
-    {:ok, %{conversations: conversations}}
+    prefs =
+      Repo.all(from(p in Preferences, where: p.user_id == ^user.id and p.conversation_id in ^ids))
+      |> Map.new(&{&1.conversation_id, &1})
+
+    positions =
+      Repo.all(from(p in Position, where: p.user_id == ^user.id and p.conversation_id in ^ids))
+      |> Map.new(&{&1.conversation_id, &1})
+
+    %{prefs: prefs, positions: positions}
+  end
+
+  # A row's position in the list: pinned (0) before unpinned (1), then the
+  # explicit `pinOrder`, then recency, then the id as a stable final tiebreak.
+  defp sort_key(row) do
+    pinned = row.preferences.pinned
+    pin_order = row.preferences.pin_order
+    {if(pinned, do: 0, else: 1), pin_order, message_sort_time(row), row.id}
+  end
+
+  # `last_message` is an `Envelope.render/1` map (atom keys). `DateTime` sorts
+  # naturally; a conversation with no messages sorts oldest.
+  defp message_sort_time(%{last_message: %{createdAt: iso}}) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> dt
+      _ -> ~U[1970-01-01 00:00:00Z]
+    end
+  end
+
+  defp message_sort_time(_row), do: ~U[1970-01-01 00:00:00Z]
+
+  # Archive filtering happens once, against the viewer's own loaded preferences
+  # (not the peer's), using the prefetched map.
+  defp exclude_archived(conversations, _state, true), do: conversations
+
+  defp exclude_archived(conversations, state, false) do
+    Enum.reject(conversations, fn conversation ->
+      case state.prefs[conversation.id] do
+        %Preferences{archived: true} -> true
+        _ -> false
+      end
+    end)
+  end
+
+  # Keyset pagination. The cursor carries the sort position of the last row of
+  # the previous page, so a conversation inserted between two page fetches never
+  # shifts the window.
+  defp paginate(rows, limit, nil), do: {:ok, Enum.take(rows, limit), drop(rows, limit)}
+
+  defp paginate(rows, limit, cursor) do
+    case decode_list_cursor(cursor) do
+      {:ok, key} ->
+        rest = Enum.drop_while(rows, &(sort_key(&1) <= key))
+        {:ok, Enum.take(rest, limit), drop(rest, limit)}
+
+      :error ->
+        {:error, :invalid_cursor}
+    end
+  end
+
+  defp drop(rows, limit), do: Enum.drop(rows, limit)
+
+  defp list_next_cursor(_page, []), do: nil
+
+  defp list_next_cursor([], _rest), do: nil
+
+  defp list_next_cursor(page, _rest) do
+    last = List.last(page)
+    {tier, pin_order, time, id} = sort_key(last)
+    encode_list_cursor({tier, pin_order, DateTime.to_unix(time, :microsecond), id})
+  end
+
+  defp encode_list_cursor({tier, pin_order, micros, id}) do
+    Base.url_encode64("#{tier}|#{pin_order}|#{micros}|#{id}", padding: false)
+  end
+
+  defp decode_list_cursor(cursor) do
+    with {:ok, decoded} <- Base.url_decode64(cursor, padding: false),
+         [tier, pin_order, micros, id] <- String.split(decoded, "|", parts: 4),
+         {tier, ""} <- Integer.parse(tier),
+         {pin_order, ""} <- Integer.parse(pin_order),
+         {micros, ""} <- Integer.parse(micros),
+         {:ok, uuid} <- Ecto.UUID.cast(id) do
+      {:ok, {tier, pin_order, DateTime.from_unix!(micros, :microsecond), uuid}}
+    else
+      _ -> :error
+    end
   end
 
   defp all_visible_conversations(%User{} = user) do
+    # `private_key` is the two participant ids sorted and joined; the viewer is
+    # either the first or the second half. Filtering on that prefix/suffix keeps
+    # the scan to the viewer's own pairs instead of every private row on the
+    # server — the old version loaded all private conversations and filtered in
+    # Elixir.
+    prefix = user.id <> ":%"
+    suffix = "%:" <> user.id
+
     private_convos =
       from(c in Conversation,
-        where: c.type == :private,
+        where:
+          c.type == :private and
+            (like(c.private_key, ^prefix) or like(c.private_key, ^suffix)),
         select: c
       )
       |> Repo.all()
-      |> Enum.filter(fn c ->
-        case Conversation.participant_ids(c) do
-          [a, b] -> user.id in [a, b]
-          _ -> false
-        end
-      end)
 
     circle_convos =
       from(c in Conversation,
@@ -871,9 +1014,12 @@ defmodule AwsemChat.Chat do
 
   defp filter_by_type(conversations, _), do: conversations
 
-  defp build_conversation_row(%User{} = user, %Conversation{} = conversation) do
-    pref = get_preferences(user, conversation.id)
-    position = get_position(user, conversation.id)
+  # Returns the context's own row shape (snake_case atoms); `ConversationJSON`
+  # is the one place that names these for the wire, so the REST shape is defined
+  # once and cannot drift from the channel envelope's camelCase convention.
+  defp build_conversation_row(%User{} = user, %Conversation{} = conversation, state) do
+    pref = state.prefs[conversation.id]
+    position = state.positions[conversation.id]
 
     last_message = get_last_message(conversation.id)
 
@@ -882,39 +1028,32 @@ defmodule AwsemChat.Chat do
     row = %{
       id: conversation.id,
       type: conversation.type,
-      lastMessage: last_message && Envelope.render(last_message),
-      unreadCount: unread_count,
+      last_message: last_message && Envelope.render(last_message),
+      unread_count: unread_count,
       preferences: normalize_preferences(pref)
     }
 
-    row =
-      case conversation.type do
-        :private ->
-          peer_id = get_peer_id(user, conversation)
-          peer_profile = if peer_id, do: get_user_profile(peer_id), else: nil
-          Map.put(row, :peerProfile, peer_profile)
+    case conversation.type do
+      :private ->
+        peer_id = get_peer_id(user, conversation)
+        peer_profile = if peer_id, do: get_user_profile(peer_id), else: nil
+        Map.put(row, :peer_profile, peer_profile)
 
-        :circle ->
-          Map.put(row, :circleMeta, %{
-            id: conversation.id,
-            name: conversation.name,
-            description: conversation.description,
-            avatar_media_id: conversation.avatar_media_id
-          })
+      :circle ->
+        Map.put(row, :circle_meta, %{
+          id: conversation.id,
+          name: conversation.name,
+          description: conversation.description,
+          avatar_media_id: conversation.avatar_media_id
+        })
 
-        _ ->
-          row
-      end
-
-    row
+      _ ->
+        row
+    end
   end
 
   defp get_peer_id(%User{id: user_id}, %Conversation{} = conversation) do
-    case Conversation.participant_ids(conversation) do
-      [a, b] when a == user_id -> b
-      [a, b] when b == user_id -> a
-      _ -> nil
-    end
+    peer_id(conversation, user_id)
   end
 
   defp get_user_profile(user_id) do
@@ -932,22 +1071,14 @@ defmodule AwsemChat.Chat do
     end
   end
 
-  defp get_preferences(%User{} = user, conversation_id) do
-    Repo.get_by(Preferences, conversation_id: conversation_id, user_id: user.id)
-  end
-
-  defp get_position(%User{} = user, conversation_id) do
-    Repo.get_by(Position, conversation_id: conversation_id, user_id: user.id)
-  end
-
   defp normalize_preferences(nil) do
-    %{pinned: false, pinOrder: 0, muted: false, archived: false}
+    %{pinned: false, pin_order: 0, muted: false, archived: false}
   end
 
   defp normalize_preferences(%Preferences{} = pref) do
     %{
       pinned: pref.pinned || false,
-      pinOrder: pref.pin_order || 0,
+      pin_order: pref.pin_order || 0,
       muted: pref.muted || false,
       archived: pref.archived || false
     }
@@ -992,28 +1123,31 @@ defmodule AwsemChat.Chat do
 
     query = from(m in query, where: m.sender_id != ^user.id)
 
+    # The position's id is resolved against **this** conversation, never with an
+    # unscoped `Repo.get/2`. A position from another conversation can no longer
+    # leak a timestamp into this count.
+    #
+    # `conversation_positions.last_seen_message_id` has no FK, so a dangling id
+    # is representable (an old row, a hand-edited value). `put_position/3`
+    # refuses to introduce one, but a value already stored must not be trusted:
+    # an unresolvable id counts from the top of the viewer's visibility window —
+    # the conservative "everything is unread" reading — rather than counting
+    # everything *and* never latching, or silently showing zero.
     query =
-      if last_seen_id do
-        case last_seen_id do
-          nil ->
-            query
+      case last_seen_id do
+        nil ->
+          query
 
-          id ->
-            # Find the message by id to get its created_at for keyset comparison
-            case Repo.get(Message, id) do
-              %Message{created_at: created_at} ->
-                from(m in query,
-                  where:
-                    m.created_at > ^created_at or (m.created_at == ^created_at and m.id > ^id)
-                )
+        id ->
+          case message_in_conversation(conversation.id, id) do
+            %Message{created_at: created_at} ->
+              from(m in query,
+                where: m.created_at > ^created_at or (m.created_at == ^created_at and m.id > ^id)
+              )
 
-              nil ->
-                # If position points to non-existent message, count all messages from others?
-                query
-            end
-        end
-      else
-        query
+            nil ->
+              query
+          end
       end
 
     Repo.aggregate(query, :count)

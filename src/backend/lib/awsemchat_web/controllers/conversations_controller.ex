@@ -34,6 +34,39 @@ defmodule AwsemChatWeb.ConversationsController do
 
   def create(conn, _params), do: error(conn, :bad_request, :peer_user_id_required)
 
+  # Opening metadata for a conversation the caller can already see, including a
+  # read-only one: after unfriend/block `POST /conversations` is refused (it
+  # gates on `Social.send_allowed?/2`), so without this the client could not read
+  # the conversation's own metadata. Visibility is `Chat.get_conversation/2` —
+  # the same rule the message list uses — so this adds no new access.
+  def show(conn, %{"conversationId" => conversation_id}) do
+    user = conn.assigns.current_user
+
+    case Chat.get_conversation(user, conversation_id) do
+      nil ->
+        render_error(conn, not_found_or_forbidden(conversation_id))
+
+      conversation ->
+        json(conn, ConversationJSON.data(conversation, peer_opts(user, conversation)))
+    end
+  end
+
+  defp not_found_or_forbidden(conversation_id) do
+    case Chat.get_conversation_row(conversation_id) do
+      nil -> :not_found
+      _ -> :not_member
+    end
+  end
+
+  defp peer_opts(%{id: user_id}, %{type: :private} = conversation) do
+    case Chat.peer_id(conversation, user_id) do
+      nil -> []
+      peer_id -> [peer: Accounts.get_by_id(peer_id)]
+    end
+  end
+
+  defp peer_opts(_user, _conversation), do: []
+
   def list_messages(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.list_messages(conn.assigns.current_user, conversation_id, params) do
       {:ok, page} -> json(conn, MessageJSON.page(page))
@@ -50,7 +83,7 @@ defmodule AwsemChatWeb.ConversationsController do
 
   def index(conn, params) do
     case Chat.list_conversations(conn.assigns.current_user, params) do
-      {:ok, page} -> json(conn, page)
+      {:ok, page} -> json(conn, ConversationJSON.page(page))
       {:error, reason} -> render_error(conn, reason)
     end
   end

@@ -474,6 +474,191 @@ defmodule AwsemChatWeb.ConversationsControllerTest do
              build_conn() |> get("/api/v1/blocks") |> json_response(401)
   end
 
+  test "GET /api/v1/conversations renders camelCase rows with no position field", %{
+    alice: alice,
+    bob: bob,
+    conversation: conversation
+  } do
+    {:ok, msg} =
+      Chat.send_message(bob, conversation.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1, "text" => "hi"}
+      })
+
+    assert {:ok, _} = Chat.put_position(alice, conversation.id, msg.id)
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations")
+      |> json_response(200)
+
+    assert [row] = body["conversations"]
+    assert body["nextCursor"] == nil
+
+    # Wire convention: camelCase everywhere (Envelope.render/1 is the reference).
+    assert row["type"] == "private"
+    assert is_integer(row["unreadCount"])
+    assert row["lastMessage"]["conversationId"] == conversation.id
+    assert row["peerProfile"]["avatarMediaId"] == nil
+    assert row["preferences"]["pinOrder"] == 0
+
+    # No read/position state of any viewer shape.
+    refute Map.has_key?(row, "position")
+    refute Map.has_key?(row, "lastSeenMessageId")
+    refute Map.has_key?(row, "last_seen_message_id")
+    refute Map.has_key?(row["preferences"], "pin_order")
+    refute inspect(row) =~ "last_seen"
+  end
+
+  test "GET /api/v1/conversations paginates with a cursor", %{
+    alice: alice,
+    bob: bob,
+    conversation: conversation
+  } do
+    other = other_conversation(alice)
+
+    {:ok, _} =
+      Chat.send_message(bob, conversation.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1}
+      })
+
+    {:ok, _} =
+      Chat.send_message(alice, other.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1}
+      })
+
+    first =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations?limit=1")
+      |> json_response(200)
+
+    assert [_] = first["conversations"]
+    assert is_binary(first["nextCursor"])
+
+    second =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations?limit=1&cursor=#{first["nextCursor"]}")
+      |> json_response(200)
+
+    assert [_] = second["conversations"]
+
+    refute Enum.map(second["conversations"], & &1["id"]) ==
+             Enum.map(first["conversations"], & &1["id"])
+  end
+
+  test "GET /api/v1/conversations with a malformed cursor is 400", %{alice: alice} do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations?cursor=not-a-cursor")
+      |> json_response(400)
+
+    assert body == %{"error" => %{"code" => "invalid_cursor"}}
+  end
+
+  test "POST /api/v1/conversations/:id/position with a foreign conversation's message is 404",
+       %{alice: alice, bob: bob, conversation: conversation} do
+    other = other_conversation(alice)
+
+    {:ok, foreign} =
+      Chat.send_message(alice, other.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1}
+      })
+
+    {:ok, _} =
+      Chat.send_message(bob, conversation.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1}
+      })
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/conversations/#{conversation.id}/position", %{"messageId" => foreign.id})
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+
+    # The rejected write left unread intact.
+    listed =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations")
+      |> json_response(200)
+
+    assert [row] = Enum.filter(listed["conversations"], &(&1["id"] == conversation.id))
+    assert row["unreadCount"] == 1
+  end
+
+  test "POST /api/v1/conversations/:id/position with a non-UUID is 404", %{
+    alice: alice,
+    conversation: conversation
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/conversations/#{conversation.id}/position", %{"messageId" => "nope"})
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+  end
+
+  test "GET /api/v1/conversations/:id still opens metadata after unfriend", %{
+    alice: alice,
+    bob: bob,
+    conversation: conversation
+  } do
+    assert :ok = Social.unfriend(alice, bob)
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations/#{conversation.id}")
+      |> json_response(200)
+
+    assert body["id"] == conversation.id
+    assert body["type"] == "private"
+    assert body["peer"]["id"] == bob.id
+  end
+
+  test "GET /api/v1/conversations/:id is 404 for unknown and 403 for a foreign conversation", %{
+    alice: alice
+  } do
+    not_found =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations/#{Ecto.UUID.generate()}")
+      |> json_response(404)
+
+    assert not_found == %{"error" => %{"code" => "not_found"}}
+
+    # A conversation Alice is not part of: exists, so it is 403 not 404.
+    dave = create_user("+15550005007")
+    erin = create_user("+15550005008")
+    {:ok, request} = Social.request_by_pin(dave, erin.pin)
+    {:ok, _} = Social.respond(erin, request.id, :accept)
+    {:ok, foreign} = Social.private_conversation(dave, erin)
+
+    forbidden =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations/#{foreign.id}")
+      |> json_response(403)
+
+    assert forbidden == %{"error" => %{"code" => "not_member"}}
+  end
+
   defp other_conversation(alice) do
     dave = create_user("+15550005006")
     {:ok, request} = Social.request_by_pin(alice, dave.pin)
