@@ -208,6 +208,51 @@ defmodule AwsemChat.CirclesTest do
     assert {:error, :not_found} = Circles.list_members(alice, "not-a-uuid")
   end
 
+  test "test_update_requires_owner_or_admin_membership", %{
+    alice: alice,
+    bob: bob,
+    carol: carol
+  } do
+    assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    # A non-member cannot edit.
+    assert {:error, :not_member} = Circles.update(carol, circle.id, %{"name" => "Hijacked"})
+
+    # An ordinary member cannot either.
+    assert {:ok, request} = Social.request_by_pin(alice, bob.pin)
+    assert {:ok, _} = Social.respond(bob, request.id, :accept)
+    assert {:ok, _results} = Circles.invite(alice, circle.id, [bob.id])
+    inv = Repo.get_by!(CircleInvitation, circle_id: circle.id, invitee_id: bob.id)
+    assert {:ok, _} = Circles.respond(bob, inv.id, :accept)
+    assert {:error, :forbidden} = Circles.update(bob, circle.id, %{"name" => "Renamed"})
+
+    # The owner can.
+    assert {:ok, updated} = Circles.update(alice, circle.id, %{"name" => "Renamed"})
+    assert updated.name == "Renamed"
+  end
+
+  test "test_update_ignores_protected_fields", %{alice: alice} do
+    assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    # A stray id / type / created_by in the params map is not writable: only the
+    # profile fields are read.
+    assert {:ok, updated} =
+             Circles.update(alice, circle.id, %{
+               "id" => Ecto.UUID.generate(),
+               "type" => "private",
+               "created_by" => alice.id,
+               "name" => "Still a circle"
+             })
+
+    assert updated.id == circle.id
+    assert updated.type == :circle
+    assert updated.name == "Still a circle"
+  end
+
+  test "test_update_with_non_uuid_id_is_not_found", %{alice: alice} do
+    assert {:error, :not_found} = Circles.update(alice, "not-a-uuid", %{"name" => "x"})
+  end
+
   defp get_pending_request_id(recipient, sender) do
     req =
       Repo.get_by!(AwsemChat.Social.FriendRequest,

@@ -72,15 +72,36 @@ defmodule AwsemChat.Circles do
     end
   end
 
-  def update(_actor, circle_id, attrs) do
+  @doc """
+  Updates a circle's profile on behalf of `actor`.
+
+  Only an active owner or admin may edit the profile — the same rule
+  `remove_member/3` applies to destructive membership changes. A non-member is
+  `:not_member`, a member below owner/admin is `:forbidden`, and an unknown
+  circle is `:not_found`.
+
+  Only the profile fields are read from `attrs`: the circle's identity, type and
+  creator are not client-writable, and a stray `"id"` (the route's own param,
+  which the controller forwards) must never reach the changeset.
+  """
+  def update(%User{} = actor, circle_id, attrs) do
     case get_circle_conversation(circle_id) do
       nil ->
         {:error, :not_found}
 
       conversation ->
-        conversation
-        |> Conversation.changeset(attrs)
-        |> Repo.update()
+        case get_membership(conversation.id, actor.id) do
+          %CircleMembership{role: role} when role in [:owner, :admin] ->
+            conversation
+            |> Conversation.changeset(circle_profile_attrs(attrs))
+            |> Repo.update()
+
+          %CircleMembership{} ->
+            {:error, :forbidden}
+
+          nil ->
+            {:error, :not_member}
+        end
     end
   end
 
@@ -112,6 +133,27 @@ defmodule AwsemChat.Circles do
   def get_membership(circle_id, user_id) do
     Repo.get_by(CircleMembership, circle_id: circle_id, user_id: user_id, state: :active)
   end
+
+  # Whitelist a circle's client-writable profile fields from the params map the
+  # controller forwards (which also carries the route's `"id"`). Mirrors how
+  # `create/2` reads its own fields, so an update accepts the same two spellings
+  # and nothing else.
+  defp circle_profile_attrs(attrs) do
+    %{}
+    |> maybe_put_circle_attr(:name, fetch_circle_attr(attrs, :name))
+    |> maybe_put_circle_attr(:description, fetch_circle_attr(attrs, :description))
+    |> maybe_put_circle_attr(:avatar_media_id, fetch_circle_media_id(attrs))
+  end
+
+  defp fetch_circle_attr(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, to_string(key))
+
+  defp fetch_circle_media_id(attrs) do
+    Map.get(attrs, :avatarMediaId) || Map.get(attrs, "avatarMediaId") ||
+      Map.get(attrs, :avatar_media_id) || Map.get(attrs, "avatar_media_id")
+  end
+
+  defp maybe_put_circle_attr(map, _key, nil), do: map
+  defp maybe_put_circle_attr(map, key, value), do: Map.put(map, key, value)
 
   defp get_circle_conversation(circle_id) do
     case Ecto.UUID.cast(circle_id) do

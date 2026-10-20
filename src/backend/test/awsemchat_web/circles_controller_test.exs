@@ -223,6 +223,56 @@ defmodule AwsemChatWeb.CirclesControllerTest do
     assert body == %{"error" => %{"code" => "not_found"}}
   end
 
+  test "PATCH /api/v1/circles/:id by a non-member is 403 not_member", %{
+    alice: alice,
+    carol: carol
+  } do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    body =
+      build_conn()
+      |> authenticate(carol.token)
+      |> patch("/api/v1/circles/#{circle.id}", %{"name" => "Hijacked"})
+      |> json_response(403)
+
+    assert body == %{"error" => %{"code" => "not_member"}}
+  end
+
+  test "PATCH /api/v1/circles/:id by an ordinary member is 403 forbidden", %{
+    alice: alice,
+    bob: bob
+  } do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+    {:ok, _} = Circles.invite(alice, circle.id, [bob.id])
+    invitation = fetch_invitation(circle.id, bob.id)
+    {:ok, _} = Circles.respond(bob, invitation.id, :accept)
+
+    body =
+      build_conn()
+      |> authenticate(bob.token)
+      |> patch("/api/v1/circles/#{circle.id}", %{"name" => "Renamed"})
+      |> json_response(403)
+
+    assert body == %{"error" => %{"code" => "forbidden"}}
+  end
+
+  test "PATCH /api/v1/circles/:id by the owner updates the profile", %{alice: alice} do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> patch("/api/v1/circles/#{circle.id}", %{"name" => "Renamed", "description" => "new"})
+      |> json_response(200)
+
+    assert body["circle"]["name"] == "Renamed"
+    assert body["circle"]["description"] == "new"
+
+    # The route param `id` must not reach the changeset: it is the circle's own
+    # identity, not a client-writable field.
+    assert body["circle"]["id"] == circle.id
+  end
+
   defp fetch_invitation(circle_id, invitee_id) do
     AwsemChat.Repo.get_by!(AwsemChat.Chat.CircleInvitation,
       circle_id: circle_id,

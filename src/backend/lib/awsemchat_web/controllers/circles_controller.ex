@@ -30,7 +30,9 @@ defmodule AwsemChatWeb.CirclesController do
   end
 
   def update(conn, %{"id" => id} = params) do
-    case Circles.update(conn.assigns.current_user, id, params) do
+    attrs = Map.drop(params, ["id"])
+
+    case Circles.update(conn.assigns.current_user, id, attrs) do
       {:ok, circle} ->
         json(conn, %{circle: CircleJSON.data(circle)})
 
