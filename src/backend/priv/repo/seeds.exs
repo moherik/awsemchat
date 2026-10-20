@@ -1,11 +1,10 @@
-# Script for populating the database. You can run it as:
+# Populates the database with the demo cast when setting up: the bot accounts
+# the owner can add as friends and talk to. Safe to run repeatedly.
 #
 #     mix run priv/repo/seeds.exs
 #
-# Inside the script, you can read and write to any of your
-# repositories directly:
-#
-#     AwsemChat.Repo.insert!(%AwsemChat.SomeSchema{})
-#
-# We recommend using the bang functions (`insert!`, `update!`
-# and so on) as they will fail if something goes wrong.
+# `mix ecto.setup` runs this. `priv/repo/seed.exs` is the same seed under the
+# name the task brief uses. Run `mix awsemchat.seed` to seed and print the bot
+# phones and PINs.
+
+AwsemChat.Seeds.seed()

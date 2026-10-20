@@ -16,6 +16,13 @@ config :awsemchat, :otp,
   provider: AwsemChat.Accounts.DevOtp,
   ttl_seconds: 300
 
+# Seeded bot accounts (`mix awsemchat.seed`) and the auto-reply responder.
+# `Bots` subscribes to each phone's account topic at boot and answers private
+# messages; the phones here and the seed roster are the same list.
+config :awsemchat, :bots,
+  phones: ["0811110001", "0811110002", "0811110003"],
+  reply_delay_ms: {800, 2000}
+
 # Configures the endpoint
 config :awsemchat, AwsemChatWeb.Endpoint,
   url: [host: "localhost"],

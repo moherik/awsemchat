@@ -25,6 +25,12 @@ config :awsemchat, :otp,
   provider: AwsemChat.Accounts.DevOtp,
   ttl_seconds: 1
 
+# Tests drive the responder with an injected zero delay; the supervised
+# instance subscribes to no seed topics in a fresh test database.
+config :awsemchat, :bots,
+  phones: [],
+  reply_delay_ms: 0
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

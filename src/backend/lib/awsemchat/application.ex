@@ -13,10 +13,13 @@ defmodule AwsemChat.Application do
       AwsemChat.Accounts.DevOtp,
       {DNSCluster, query: Application.get_env(:awsemchat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: AwsemChat.PubSub},
-      # Start a worker by calling: AwsemChat.Worker.start_link(arg)
-      # {AwsemChat.Worker, arg},
       # Start to serve requests, typically the last entry
-      AwsemChatWeb.Endpoint
+      AwsemChatWeb.Endpoint,
+      # Subscribes to the seeded bots' user topics, so it starts after the
+      # Endpoint its `subscribe/2` reads the PubSub server from — starting it
+      # earlier crashes boot with "the table identifier does not refer to an
+      # existing ETS table".
+      AwsemChat.Bots
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
