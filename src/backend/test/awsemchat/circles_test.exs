@@ -21,7 +21,7 @@ defmodule AwsemChat.CirclesTest do
     assert circle.type == :circle
     assert circle.name == "Squad"
 
-    members = Circles.list_members(circle.id)
+    assert {:ok, members} = Circles.list_members(alice, circle.id)
 
     assert Enum.any?(members, fn m ->
              m.user_id == alice.id and m.role == :owner and m.state == :active
@@ -86,7 +86,8 @@ defmodule AwsemChat.CirclesTest do
         u
       end
 
-    assert length(Circles.list_members(circle.id)) == 20
+    assert {:ok, members} = Circles.list_members(alice, circle.id)
+    assert length(members) == 20
 
     # Now try to add one more - should fail
     new_user = create_user("+15550006999")
@@ -143,7 +144,8 @@ defmodule AwsemChat.CirclesTest do
     results = [res1, res2]
     assert Enum.count(results, &match?({:ok, _}, &1)) == 1
     assert Enum.count(results, &(&1 == {:error, :circle_full})) == 1
-    assert length(Circles.list_members(circle.id)) == 20
+    assert {:ok, members} = Circles.list_members(alice, circle.id)
+    assert length(members) == 20
   end
 
   test "test_removed_member_cannot_list_messages_after_removal_and_gets_no_fanout", %{
@@ -176,11 +178,34 @@ defmodule AwsemChat.CirclesTest do
     assert {:ok, _} = Circles.respond(bob, inv.id, :accept)
 
     assert :ok = Circles.leave(alice, circle.id)
-    members = Circles.list_members(circle.id)
+
+    # Alice left, so Bob (promoted to owner) is the one who may read the roster.
+    assert {:ok, members} = Circles.list_members(bob, circle.id)
 
     assert Enum.any?(members, fn m ->
              m.user_id == bob.id and m.role == :owner and m.state == :active
            end)
+  end
+
+  test "test_list_members_requires_an_active_member", %{alice: alice, carol: carol} do
+    assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    # A stranger cannot enumerate the roster.
+    assert {:error, :not_member} = Circles.list_members(carol, circle.id)
+
+    # Nor can someone whose membership ended.
+    assert {:ok, request} = Social.request_by_pin(alice, carol.pin)
+    assert {:ok, _} = Social.respond(carol, request.id, :accept)
+    assert {:ok, _results} = Circles.invite(alice, circle.id, [carol.id])
+    inv = Repo.get_by!(CircleInvitation, circle_id: circle.id, invitee_id: carol.id)
+    assert {:ok, _} = Circles.respond(carol, inv.id, :accept)
+    assert {:ok, _} = Circles.list_members(carol, circle.id)
+    assert :ok = Circles.leave(carol, circle.id)
+    assert {:error, :not_member} = Circles.list_members(carol, circle.id)
+  end
+
+  test "test_list_members_with_non_uuid_id_is_not_found", %{alice: alice} do
+    assert {:error, :not_found} = Circles.list_members(alice, "not-a-uuid")
   end
 
   defp get_pending_request_id(recipient, sender) do

@@ -92,7 +92,12 @@ defmodule AwsemChatWeb.CirclesController do
   end
 
   def list_members(conn, %{"id" => id}) do
-    members = Circles.list_members(id)
-    json(conn, %{members: Enum.map(members, &CircleMembershipJSON.data/1)})
+    case Circles.list_members(conn.assigns.current_user, id) do
+      {:ok, members} ->
+        json(conn, %{members: Enum.map(members, &CircleMembershipJSON.data/1)})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
+    end
   end
 end

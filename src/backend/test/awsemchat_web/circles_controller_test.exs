@@ -184,6 +184,45 @@ defmodule AwsemChatWeb.CirclesControllerTest do
     assert Enum.map(body["members"], & &1["userId"]) == [alice.id, bob.id]
   end
 
+  test "GET /api/v1/circles/:id/members as a non-member is 403 not_member", %{
+    alice: alice,
+    carol: carol
+  } do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    body =
+      build_conn()
+      |> authenticate(carol.token)
+      |> get("/api/v1/circles/#{circle.id}/members")
+      |> json_response(403)
+
+    assert body == %{"error" => %{"code" => "not_member"}}
+  end
+
+  test "GET /api/v1/circles/:id/members with an unknown circle is 404 not_found", %{
+    alice: alice
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/#{Ecto.UUID.generate()}/members")
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+  end
+
+  test "GET /api/v1/circles/:id/members with a non-uuid id is 404 not_found, not a 500", %{
+    alice: alice
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/not-a-uuid/members")
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+  end
+
   defp fetch_invitation(circle_id, invitee_id) do
     AwsemChat.Repo.get_by!(AwsemChat.Chat.CircleInvitation,
       circle_id: circle_id,

@@ -84,7 +84,22 @@ defmodule AwsemChat.Circles do
     end
   end
 
-  def list_members(circle_id) do
+  def list_members(%User{} = actor, circle_id) do
+    case get_circle_conversation(circle_id) do
+      nil ->
+        {:error, :not_found}
+
+      %Conversation{} = conversation ->
+        case get_membership(conversation.id, actor.id) do
+          %CircleMembership{} -> {:ok, do_list_members(conversation.id)}
+          nil -> {:error, :not_member}
+        end
+    end
+  end
+
+  # The roster itself. Private: `list_members/2` is the only caller, so the
+  # authorization above cannot be bypassed by reaching for the query directly.
+  defp do_list_members(circle_id) do
     Repo.all(
       from(m in CircleMembership,
         where: m.circle_id == ^circle_id and m.state == :active,
