@@ -59,6 +59,45 @@ defmodule AwsemChat.Media do
     |> Repo.exists?()
   end
 
+  @doc """
+  Whether `user` owns every one of `media_ids`.
+
+  Chat calls this before recording references: attaching media you do not own to
+  a message would put you and your recipients into that media's audience, which
+  is someone else's private upload. Sharing is allowed only for your own
+  uploads.
+  """
+  def owns_all?(%User{id: owner_id}, media_ids) when is_list(media_ids) do
+    Enum.all?(media_ids, fn media_id -> owned_by?(owner_id, media_id) end)
+  end
+
+  defp owned_by?(owner_id, media_id) when is_binary(media_id) do
+    case Ecto.UUID.cast(media_id) do
+      {:ok, uuid} ->
+        Repo.exists?(from(m in Media, where: m.id == ^uuid and m.owner_id == ^owner_id))
+
+      :error ->
+        false
+    end
+  end
+
+  defp owned_by?(_owner_id, _media_id), do: false
+
+  @doc """
+  The media ids a message references, in the order they were sent.
+
+  Chat renders this into the envelope's `mediaIds`; it comes from the
+  `message_media` row, never from parsing the opaque payload.
+  """
+  def media_ids_for_message(message_id) do
+    from(r in Reference,
+      where: r.message_id == ^message_id,
+      order_by: [asc: r.inserted_at, asc: r.id],
+      select: r.media_id
+    )
+    |> Repo.all()
+  end
+
   @doc "Opens stored bytes for reading. The controller streams from the returned device."
   def open(path) when is_binary(path), do: store().open(path)
 

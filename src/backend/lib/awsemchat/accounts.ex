@@ -99,6 +99,16 @@ defmodule AwsemChat.Accounts do
     Repo.get_by(User, phone: phone)
   end
 
+  @doc "Looks up a user by id, or `nil`. An unparseable id is simply not found."
+  def get_by_id(user_id) when is_binary(user_id) do
+    case Ecto.UUID.cast(user_id) do
+      {:ok, uuid} -> Repo.get(User, uuid)
+      :error -> nil
+    end
+  end
+
+  def get_by_id(_user_id), do: nil
+
   # Two callers can race on the same phone, and a PIN can collide with a user
   # created a moment ago. Both are unique-constraint failures, so retry a
   # bounded number of times with a fresh PIN before giving up.

@@ -78,11 +78,12 @@ defmodule AwsemChat.MediaTest do
     stranger: stranger
   } do
     assert {:ok, media} = Media.upload(owner, upload_fixture(png(), content_type: "image/png"))
+    message = real_message(owner)
 
-    Repo.insert!(%Media.Reference{
+    Media.record_message_reference(%{
       media_id: media.id,
-      message_id: Ecto.UUID.generate(),
-      conversation_id: Ecto.UUID.generate(),
+      message_id: message.id,
+      conversation_id: message.conversation_id,
       user_ids: [owner.id, stranger.id]
     })
 
@@ -94,15 +95,35 @@ defmodule AwsemChat.MediaTest do
     stranger: stranger
   } do
     assert {:ok, media} = Media.upload(owner, upload_fixture(png(), content_type: "image/png"))
+    message = real_message(owner)
 
-    Repo.insert!(%Media.Reference{
+    Media.record_message_reference(%{
       media_id: media.id,
-      message_id: Ecto.UUID.generate(),
-      conversation_id: Ecto.UUID.generate()
+      message_id: message.id,
+      conversation_id: message.conversation_id,
+      user_ids: []
     })
 
     refute Media.authorized?(stranger, media)
     assert Media.authorized?(owner, media)
+  end
+
+  # The message_media foreign keys are real now (Task 4), so a reference needs a
+  # message in a conversation that actually exist.
+  defp real_message(user) do
+    peer = create_user("+15550001099")
+    {:ok, request} = AwsemChat.Social.request_by_pin(user, peer.pin)
+    {:ok, _} = AwsemChat.Social.respond(peer, request.id, :accept)
+    {:ok, conversation} = AwsemChat.Social.private_conversation(user, peer)
+
+    {:ok, message} =
+      AwsemChat.Chat.send_message(user, conversation.id, %{
+        clientOpId: Ecto.UUID.generate(),
+        kind: :text,
+        payload: %{"v" => 1}
+      })
+
+    message
   end
 
   defp create_user(phone) do
