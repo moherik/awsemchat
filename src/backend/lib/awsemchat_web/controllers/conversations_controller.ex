@@ -48,6 +48,31 @@ defmodule AwsemChatWeb.ConversationsController do
     end
   end
 
+  def index(conn, params) do
+    case Chat.list_conversations(conn.assigns.current_user, params) do
+      {:ok, page} -> json(conn, page)
+      {:error, reason} -> render_error(conn, reason)
+    end
+  end
+
+  def update_preferences(conn, %{"id" => conversation_id} = params) do
+    attrs = Map.drop(params, ["id"])
+
+    case Chat.put_preferences(conn.assigns.current_user, conversation_id, attrs) do
+      {:ok, _pref} -> json(conn, %{ok: true})
+      {:error, reason} -> render_error(conn, reason)
+    end
+  end
+
+  def update_position(conn, %{"id" => conversation_id} = params) do
+    message_id = params["messageId"] || params["message_id"] || params["lastSeenMessageId"]
+
+    case Chat.put_position(conn.assigns.current_user, conversation_id, message_id) do
+      {:ok, _pos} -> json(conn, %{ok: true})
+      {:error, reason} -> render_error(conn, reason)
+    end
+  end
+
   # A row that exists but is not mine is 403; one that does not exist is 404.
   defp render_error(conn, :not_found), do: error(conn, :not_found, :not_found)
   defp render_error(conn, :not_member), do: error(conn, :forbidden, :not_member)

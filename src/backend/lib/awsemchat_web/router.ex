@@ -37,9 +37,13 @@ defmodule AwsemChatWeb.Router do
     post "/blocks", FriendsController, :create_block
     delete "/blocks/:userId", FriendsController, :delete_block
 
+    get "/conversations", ConversationsController, :index
     post "/conversations", ConversationsController, :create
     get "/conversations/:conversationId/messages", ConversationsController, :list_messages
     post "/conversations/:conversationId/messages", ConversationsController, :send_message
+    put "/conversations/:id/preferences", ConversationsController, :update_preferences
+    patch "/conversations/:id/preferences", ConversationsController, :update_preferences
+    post "/conversations/:id/position", ConversationsController, :update_position
 
     post "/circles", CirclesController, :create
     get "/circles/:id", CirclesController, :show
