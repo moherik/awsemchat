@@ -52,3 +52,30 @@ Latest demo verification: web typecheck/lint/export pass after reviewer fixes. B
 ## Approved UI handoff — 2026-10-10
 
 The product owner approved the UI baseline after the final chat-row spacing fix. [UI/backend handoff](ui-backend-handoff.md) consolidates additions, changes, removals, required data/operations, privacy boundaries, and unresolved production integration decisions. Earlier entries and screenshots describe historical iterations; own-message side actions, the bottom Moments composer, inline Circle invitations, and visible chat-row overflow buttons are superseded. Chat preferences/GIF favorites remain demo session state, and native/production verification is outstanding.
+
+## Phoenix backend stage — 2026-10-20/21
+
+Stack change: the specification's Go backend choice was superseded by Elixir Phoenix at the owner's direction. Design at [Phoenix backend design](../superpowers/specs/2026-10-20-phoenix-backend-design.md), implementation plan at [Phoenix backend plan](../superpowers/plans/2026-10-20-phoenix-backend.md). Thirteen tasks executed on branch v2 in `src/backend/`, one commit per task plus review-driven fixes; every task passed an independent spec-and-quality review before the next began.
+
+What is now real, verified against a running server (not just a green suite):
+
+- Accounts: phone plus dev OTP behind an `Otp` behaviour (dev provider logs the code, constant `123456`), SHA-256-hashed bearer tokens with one active session per user, 6-character A-Z-0-9 PIN per user, profile updates. Phone numbers are normalized, so differently formatted spellings of one number resolve to a single account.
+- Media: authenticated multipart upload and streamed download, 10 MB cap, local disk under `priv/media/` behind a swappable `Store` behaviour. Access is owner-only until a message references the media, and the reference carries a recipient snapshot taken at send time, so a later Circle join cannot read older media.
+- Social: friend requests by PIN, accept/decline/cancel, unfriend, block, unblock.
+- Chat: private conversations keyed by a sorted participant pair, circles with capacity (20) enforced under a row lock, invitations restricted to accepted friends, idempotent sends via a unique `(sender_id, client_op_id)` index, replies confined to the same conversation, and an opaque jsonb payload the server never interprets with a 256 KB cap.
+- Delivery: one pending delivery row per intended recipient created at send time; acks flip the caller's own row and report acked/total counts to the sender; a removed circle member's pending rows are marked unreachable rather than left pending.
+- Realtime: `UserSocket` authenticated by token, one channel per user on `user:<id>`, fan-out that re-checks authorization at fan-out time using the same predicates as the send path.
+- Circles: creation with owner membership, invite/accept/decline, leave, owner-only removal, update, member listing. A member only sees messages and moments created at or after their `joined_at`; rejoining does not restore prejoin history. When the last owner leaves, the oldest active member is promoted; a circle with no active members remains a read-only row.
+- Moments: create, list, promote a message to a Moment (author only, same conversation), author-only delete, audience-bounded by the same join rule, with `moment:changed` broadcasts.
+- Reactions: one reaction per user per target, aggregates, visibility enforced against the same audience rules.
+- Conversation list: pinned-first ordering with deterministic tie-breaking, mute, archive, unread counts derived from the viewer's own position, and no foreign read state in any response.
+- Shared media: newest-first grid per conversation excluding stickers and moment references, keyset cursor, membership plus join-boundary enforced with no enumeration of conversations the caller cannot see.
+- Bots and seeds: three seeded bots (Naya, Raka, Sari; phones 0811110001..3, PINs BOTPN1..3) that accept a friend request and auto-reply in private conversations only, never bot-to-bot and never in circles. `mix awsemchat.seed` prints the credentials.
+
+Verification: `mix test` 215 tests, 0 failures; `MIX_ENV=test mix compile --force --warnings-as-errors` clean; `mix format --check-formatted` clean. `scripts/smoke.sh` ran end to end against a live server and exercised sign in, friend request by seed PIN, bot acceptance, message send, message list, and the bot's auto-reply.
+
+Run instructions, bot credentials and emulator addressing (`10.0.2.2:4000`) are in `src/backend/README.md`. Postgres runs in the dedicated `awsemchat-postgres` container on host port 5433, published by `src/backend/docker-compose.yml`; port 5432 was left to the unrelated container.
+
+Two errors the server returns deliberately: the envelope is `{"error":{"code":"<snake_case>"}}`. Design section 7 also lists a human-readable `message` field; the shipped envelope is code-only, which is narrower than the design text and should be reconciled in the design doc rather than the API.
+
+Still outstanding, per design section 9: the mobile app has not been wired to this API (Plan 2, design section 8), so the Expo app still runs on its in-memory demo store. End-to-end encryption is deferred; messages are already shaped as opaque envelopes so it can slot in without a migration. Also deferred: push notifications, backups, PING/PONG mute propagation, Now Playing sync, the report workflow, a real SMS OTP provider, object storage instead of local disk, and media dimensions (the columns are reserved but nothing populates them, so the shared-media response returns null).
