@@ -13,7 +13,7 @@ defmodule AwsemChatWeb.ConversationsController do
   alias AwsemChat.Accounts
   alias AwsemChat.Chat
   alias AwsemChat.Social
-  alias AwsemChatWeb.{ConversationJSON, ErrorJSON, MessageJSON}
+  alias AwsemChatWeb.{ConversationJSON, ErrorJSON, MessageJSON, SharedMediaJSON}
 
   def create(conn, %{"peerUserId" => peer_id}) do
     user = conn.assigns.current_user
@@ -77,6 +77,17 @@ defmodule AwsemChatWeb.ConversationsController do
   def send_message(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.send_message(conn.assigns.current_user, conversation_id, params) do
       {:ok, message} -> conn |> put_status(:created) |> json(MessageJSON.data(message))
+      {:error, reason} -> render_error(conn, reason)
+    end
+  end
+
+  # The shared-media grid: photos the conversation's messages carry, newest
+  # first, with the same keyset cursor as the message list. Membership and the
+  # circle join boundary are `Chat.list_shared_media/3`'s, so a non-member is
+  # refused exactly as they are for messages.
+  def list_media(conn, %{"id" => conversation_id} = params) do
+    case Chat.list_shared_media(conn.assigns.current_user, conversation_id, params) do
+      {:ok, page} -> json(conn, SharedMediaJSON.page(page))
       {:error, reason} -> render_error(conn, reason)
     end
   end

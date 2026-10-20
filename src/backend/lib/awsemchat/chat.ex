@@ -34,6 +34,8 @@ defmodule AwsemChat.Chat do
   }
 
   alias AwsemChat.Media
+  alias AwsemChat.Media.Media, as: MediaRow
+  alias AwsemChat.Media.Reference
   alias AwsemChat.Repo
   alias AwsemChat.Social
 
@@ -134,22 +136,115 @@ defmodule AwsemChat.Chat do
         order_by: [desc: m.created_at, desc: m.id]
       )
 
+    query |> visible_since(conversation, user) |> apply_cursor(opts)
+  end
+
+  # The circle join boundary, applied to any query over messages in a
+  # conversation: an active member only sees messages from their `joined_at`
+  # onward; anyone else sees none. Private conversations have no boundary —
+  # visibility is the participant pair, already enforced before we get here.
+  #
+  # `position` is the message source's binding index in `query` (0 for the
+  # message list, 1 for the shared-media query, whose first binding is the
+  # reference). Rebinding by position keeps the other sources intact.
+  defp visible_since(query, conversation, user, position \\ 0)
+
+  defp visible_since(query, %Conversation{type: :circle, id: circle_id}, user, position) do
+    case get_active_membership(circle_id, user.id) do
+      %CircleMembership{joined_at: joined_at} when not is_nil(joined_at) ->
+        rebind_message(query, position, join_condition(position, joined_at))
+
+      _ ->
+        rebind_message(query, position, join_condition(position, :none))
+    end
+  end
+
+  defp visible_since(query, _conversation, _user, _position), do: query
+
+  # A dynamic whose binding list matches the query's positions, so the message
+  # source is the one the condition names. `:none` hides everything.
+  defp join_condition(0, :none), do: dynamic([m], false)
+  defp join_condition(0, joined_at), do: dynamic([m], m.created_at >= ^joined_at)
+  defp join_condition(1, :none), do: dynamic([_r, m], false)
+  defp join_condition(1, joined_at), do: dynamic([_r, m], m.created_at >= ^joined_at)
+
+  defp rebind_message(query, 0, condition), do: from([m] in query, where: ^condition)
+  defp rebind_message(query, 1, condition), do: from([_r, m] in query, where: ^condition)
+
+  @doc """
+  Lists the media shared in `conversation_id` for `user`, newest first.
+
+  The rows come from `message_media` joined to the messages that reference them,
+  so the grid is exactly the media a message actually carries — never ids parsed
+  out of an opaque payload. Sticker-kind messages are excluded (their media is a
+  rendered sticker, not a shared photo) and so is `moment-ref`, which carries no
+  pixels. Keyset pagination is the same `(created_at, id)` cursor as
+  `list_messages/3`: pass the previous page's `nextCursor` back as `:cursor`.
+
+  Membership is `list_messages/3`'s rule — a participant of a private
+  conversation, or an active circle member — and a circle member is held to the
+  join boundary, so media sent before they joined is not listed.
+
+  Each item is `%{media_id, message_id, mime, width, height, created_at}` —
+  `SharedMediaJSON` names those for the wire (camelCase), the same way
+  `ConversationJSON` does for the conversation list. `width`/`height` are
+  reported as stored: `media.width`/`height` are currently never populated, so
+  they are `nil` rather than an invented size.
+
+  Options: `:limit` (default #{@default_page}), `:cursor`.
+
+  Errors: `:not_found`, `:not_member`, `:invalid_cursor`.
+  """
+  def list_shared_media(%User{} = user, conversation_id, opts \\ %{}) do
+    with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id),
+         {:ok, query} <- shared_media_query(conversation, user, opts) do
+      limit = page_limit(opts)
+
+      media = Repo.all(from(r in query, limit: ^(limit + 1)))
+      {page, rest} = Enum.split(media, limit)
+
+      {:ok,
+       %{
+         items: Enum.map(page, &shared_media_item/1),
+         nextCursor: next_cursor(page, rest)
+       }}
+    end
+  end
+
+  # The media rows for messages the viewer may read: one row per `(message,
+  # media)` pair, newest first, carrying the message's own `(created_at, id)` so
+  # the cursor keyset matches the message list's. Sticker and moment-ref messages
+  # are filtered out of the join — a sticker's media is artwork metadata and a
+  # moment-ref has no attached pixels.
+  defp shared_media_query(conversation, user, opts) do
     query =
-      case conversation.type do
-        :circle ->
-          case get_active_membership(conversation.id, user.id) do
-            %CircleMembership{joined_at: joined_at} when not is_nil(joined_at) ->
-              from(m in query, where: m.created_at >= ^joined_at)
+      from(r in Reference,
+        join: m in Message,
+        on: m.id == r.message_id,
+        join: md in MediaRow,
+        on: md.id == r.media_id,
+        where:
+          r.conversation_id == ^conversation.id and
+            m.kind not in [:sticker, :moment_ref] and
+            m.conversation_id == ^conversation.id,
+        order_by: [desc: m.created_at, desc: m.id],
+        select: {r.media_id, r.message_id, m.created_at, m.id, md.mime, md.width, md.height}
+      )
 
-            _ ->
-              from(m in query, where: false)
-          end
+    query
+    |> visible_since(conversation, user, 1)
+    |> apply_cursor(opts, 1)
+  end
 
-        _ ->
-          query
-      end
-
-    query |> apply_cursor(opts)
+  defp shared_media_item({media_id, message_id, created_at, _id, mime, width, height}) do
+    %{
+      media_id: media_id,
+      message_id: message_id,
+      mime: mime,
+      width: width,
+      height: height,
+      created_at: DateTime.to_iso8601(created_at)
+    }
   end
 
   @doc """
@@ -671,22 +766,17 @@ defmodule AwsemChat.Chat do
 
   defp normalize_limit(_limit), do: @default_page
 
-  defp apply_cursor(query, opts) do
+  defp apply_cursor(query, opts, position \\ 0) do
     case fetch_attr(opts, :cursor) do
       nil -> {:ok, query}
-      cursor -> where_before(query, cursor)
+      cursor -> where_before(query, cursor, position)
     end
   end
 
-  defp where_before(query, cursor) do
+  defp where_before(query, cursor, position) do
     case decode_cursor(cursor) do
       {:ok, %{created_at: created_at, id: id}} ->
-        {:ok,
-         where(
-           query,
-           [m],
-           m.created_at < ^created_at or (m.created_at == ^created_at and m.id < ^id)
-         )}
+        {:ok, rebind_message(query, position, before_condition(position, created_at, id))}
 
       # A cursor we did not mint is a client error, not a request for page one.
       # Silently returning the newest page would re-serve messages the caller
@@ -696,6 +786,20 @@ defmodule AwsemChat.Chat do
     end
   end
 
+  defp before_condition(0, created_at, id) do
+    dynamic(
+      [m],
+      m.created_at < ^created_at or (m.created_at == ^created_at and m.id < ^id)
+    )
+  end
+
+  defp before_condition(1, created_at, id) do
+    dynamic(
+      [_r, m],
+      m.created_at < ^created_at or (m.created_at == ^created_at and m.id < ^id)
+    )
+  end
+
   # The cursor carries the last visible row's identity, not an offset, so the
   # window is stable under concurrent inserts.
   defp next_cursor(_page, []), do: nil
@@ -703,9 +807,16 @@ defmodule AwsemChat.Chat do
   defp next_cursor([], _rest), do: nil
 
   defp next_cursor(page, _rest) do
-    last = List.last(page)
-    encode_cursor(last.created_at, last.id)
+    {created_at, id} = cursor_position(List.last(page))
+    encode_cursor(created_at, id)
   end
+
+  # The two list queries return different shapes — the message list a schema, the
+  # shared-media grid a tuple — but both end in the message's `(created_at, id)`.
+  defp cursor_position({_media_id, _message_id, created_at, id, _mime, _width, _height}),
+    do: {created_at, id}
+
+  defp cursor_position(last), do: {last.created_at, last.id}
 
   defp encode_cursor(created_at, id) do
     Base.url_encode64("#{DateTime.to_iso8601(created_at)}|#{id}", padding: false)

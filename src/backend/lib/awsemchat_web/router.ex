@@ -41,6 +41,7 @@ defmodule AwsemChatWeb.Router do
     post "/conversations", ConversationsController, :create
     get "/conversations/:conversationId", ConversationsController, :show
     get "/conversations/:conversationId/messages", ConversationsController, :list_messages
+    get "/conversations/:id/media", ConversationsController, :list_media
     post "/conversations/:conversationId/messages", ConversationsController, :send_message
     put "/conversations/:id/preferences", ConversationsController, :update_preferences
     patch "/conversations/:id/preferences", ConversationsController, :update_preferences
