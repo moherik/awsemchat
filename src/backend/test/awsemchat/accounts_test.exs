@@ -88,7 +88,12 @@ defmodule AwsemChat.AccountsTest do
     assert {:ok, _} = Accounts.request_code("+1-555-000-0001")
 
     assert Repo.aggregate(from(u in User, where: u.phone == "+15550000001"), :count) == 1
-    assert Repo.aggregate(from(u in User, where: like(u.phone, "%555%")), :count) == 1
+
+    # None of the three spellings may survive as its own row. Scoped to the
+    # spellings this test used, so an unrelated row cannot make it pass or fail.
+    spellings = ["+1 (555) 000 0001", "15550000001", "+1-555-000-0001"]
+
+    assert Repo.aggregate(from(u in User, where: u.phone in ^spellings), :count) == 0
   end
 
   test "normalize_phone/1 canonicalizes international spellings" do

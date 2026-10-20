@@ -47,7 +47,7 @@ defmodule AwsemChat.SeedsTest do
     Seeds.seed()
     Seeds.seed()
 
-    assert Repo.aggregate(User, :count) == 3
+    assert bot_count() == 3
 
     assert Enum.sort(Seeds.bot_phones()) ==
              Enum.sort(Enum.map(@expected, & &1.phone))
@@ -69,6 +69,14 @@ defmodule AwsemChat.SeedsTest do
     assert repaired.id == bot.id
     assert repaired.display_name == "Naya"
     assert repaired.status_text == "Taking the scenic route"
-    assert Repo.aggregate(User, :count) == 3
+    assert bot_count() == 3
+  end
+
+  # Counts only the roster's phones so an unrelated row in the database cannot
+  # make an idempotence assertion fail.
+  defp bot_count do
+    phones = Enum.map(@expected, & &1.phone)
+
+    Repo.aggregate(from(u in User, where: u.phone in ^phones), :count)
   end
 end
