@@ -5,7 +5,7 @@ defmodule AwsemChat.Circles do
   import Ecto.Query
 
   alias AwsemChat.Accounts.User
-  alias AwsemChat.Chat.{CircleInvitation, CircleMembership, Conversation}
+  alias AwsemChat.Chat.{Broadcast, CircleInvitation, CircleMembership, Conversation}
   alias AwsemChat.Repo
   alias AwsemChat.Social
 
@@ -42,33 +42,84 @@ defmodule AwsemChat.Circles do
 
       conversation
     end)
+    |> case do
+      {:ok, conversation} ->
+        Broadcast.circle_changed(conversation.id, :created, [creator.id])
+        {:ok, conversation}
+
+      other ->
+        other
+    end
   end
 
   def invite(actor, circle_id, user_ids) when is_list(user_ids) do
     case get_circle_conversation(circle_id) do
-      nil -> {:error, :not_found}
-      conversation -> do_invite(actor, conversation, user_ids)
+      nil ->
+        {:error, :not_found}
+
+      conversation ->
+        case do_invite(actor, conversation, user_ids) do
+          {:ok, results} ->
+            invited = for {invitee_id, :ok} <- results, do: invitee_id
+            Broadcast.circle_changed(conversation.id, :invitation, invited)
+            {:ok, results}
+
+          other ->
+            other
+        end
     end
   end
 
   def respond(user, invitation_id, action) when action in [:accept, :decline] do
     case Repo.get(CircleInvitation, invitation_id) do
-      nil -> {:error, :not_found}
-      invitation -> do_respond(user, invitation, action)
+      nil ->
+        {:error, :not_found}
+
+      invitation ->
+        case do_respond(user, invitation, action) do
+          {:ok, _} = ok ->
+            if action == :accept,
+              do: broadcast_circle_change(invitation.circle_id, :member_added)
+
+            ok
+
+          other ->
+            other
+        end
     end
   end
 
   def leave(%User{} = user, circle_id) do
     case get_circle_conversation(circle_id) do
-      nil -> {:error, :not_found}
-      conversation -> do_leave(user, conversation)
+      nil ->
+        {:error, :not_found}
+
+      conversation ->
+        case do_leave(user, conversation) do
+          :ok ->
+            broadcast_circle_change(conversation.id, :left)
+            :ok
+
+          other ->
+            other
+        end
     end
   end
 
   def remove_member(%User{} = actor, circle_id, user_id) do
     case get_circle_conversation(circle_id) do
-      nil -> {:error, :not_found}
-      conversation -> do_remove_member(actor, conversation, user_id)
+      nil ->
+        {:error, :not_found}
+
+      conversation ->
+        case do_remove_member(actor, conversation, user_id) do
+          :ok ->
+            broadcast_circle_change(conversation.id, :member_removed, [cast_id(user_id)])
+            :ok
+
+          other ->
+            other
+        end
     end
   end
 
@@ -92,9 +143,16 @@ defmodule AwsemChat.Circles do
       conversation ->
         case get_membership(conversation.id, actor.id) do
           %CircleMembership{role: role} when role in [:owner, :admin] ->
-            conversation
-            |> Conversation.changeset(circle_profile_attrs(attrs))
-            |> Repo.update()
+            case conversation
+                 |> Conversation.changeset(circle_profile_attrs(attrs))
+                 |> Repo.update() do
+              {:ok, updated} ->
+                broadcast_circle_change(conversation.id, :updated)
+                {:ok, updated}
+
+              other ->
+                other
+            end
 
           %CircleMembership{} ->
             {:error, :forbidden}
@@ -459,5 +517,31 @@ defmodule AwsemChat.Circles do
     else
       :ok
     end
+  end
+
+  # A circle change: everyone who is an active member *now* is told, plus any
+  # `extra` user the change touched (a removed member is no longer active but
+  # must still learn to drop the circle). Recipients are read after the write
+  # committed, so a user who lost access is not sent an event as a member.
+  defp broadcast_circle_change(circle_id, change, extra \\ []) do
+    Broadcast.circle_changed(circle_id, change, active_member_ids(circle_id) ++ extra)
+  end
+
+  defp cast_id(id) when is_binary(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> uuid
+      :error -> nil
+    end
+  end
+
+  defp cast_id(_), do: nil
+
+  defp active_member_ids(circle_id) do
+    Repo.all(
+      from(m in CircleMembership,
+        where: m.circle_id == ^circle_id and m.state == :active,
+        select: m.user_id
+      )
+    )
   end
 end

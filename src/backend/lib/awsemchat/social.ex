@@ -29,6 +29,7 @@ defmodule AwsemChat.Social do
 
   alias AwsemChat.Accounts.User
   alias AwsemChat.Chat.Conversation
+  alias AwsemChat.Chat.Broadcast
   alias AwsemChat.Repo
   alias AwsemChat.Social.{Blocking, FriendRequest, Friendship}
 
@@ -44,7 +45,14 @@ defmodule AwsemChat.Social do
          :ok <- reject_self(sender, recipient),
          :ok <- reject_blocked(sender, recipient),
          :ok <- reject_existing_friendship(sender, recipient) do
-      start_request(sender, recipient)
+      case start_request(sender, recipient) do
+        {:ok, request} = ok ->
+          Broadcast.friend_request_changed(request)
+          ok
+
+        other ->
+          other
+      end
     end
   end
 
@@ -57,7 +65,7 @@ defmodule AwsemChat.Social do
   """
   def respond(%User{} = user, request_id, action) when action in [:accept, :decline, :cancel] do
     case fetch_pending_request(user, request_id, action) do
-      %FriendRequest{} = request -> apply_action(request, action)
+      %FriendRequest{} = request -> deliver_response(request, action)
       # No such request, not this user's action to take, or already answered —
       # all the same answer, so ids are not probeable.
       nil -> {:error, :not_found}
@@ -113,6 +121,7 @@ defmodule AwsemChat.Social do
       delete_friendship(other, user)
     end)
 
+    Broadcast.friends_changed([user.id, other.id])
     :ok
   end
 
@@ -127,6 +136,7 @@ defmodule AwsemChat.Social do
     |> Blocking.changeset(user, other)
     |> Repo.insert(on_conflict: :nothing, conflict_target: [:blocker_id, :blocked_id])
 
+    Broadcast.friends_changed([user.id, other.id])
     :ok
   end
 
@@ -135,6 +145,7 @@ defmodule AwsemChat.Social do
     from(b in Blocking, where: b.blocker_id == ^user.id and b.blocked_id == ^other.id)
     |> Repo.delete_all()
 
+    Broadcast.friends_changed([user.id, other.id])
     :ok
   end
 
@@ -187,7 +198,7 @@ defmodule AwsemChat.Social do
   defp start_request(sender, recipient) do
     case fetch_pending_pair(sender, recipient) do
       %FriendRequest{} = existing ->
-        {:ok, existing}
+        {:ok, Repo.preload(existing, [:sender, :recipient])}
 
       nil ->
         %FriendRequest{}
@@ -200,8 +211,11 @@ defmodule AwsemChat.Social do
           # A concurrent request from the same direction won; return theirs.
           {:error, _changeset} ->
             case fetch_pending_pair(sender, recipient) do
-              %FriendRequest{} = existing -> {:ok, existing}
-              nil -> {:error, :conflict}
+              %FriendRequest{} = existing ->
+                {:ok, Repo.preload(existing, [:sender, :recipient])}
+
+              nil ->
+                {:error, :conflict}
             end
         end
     end
@@ -274,6 +288,25 @@ defmodule AwsemChat.Social do
 
   defp apply_action(request, :decline), do: {:ok, update_state!(request, :declined)}
   defp apply_action(request, :cancel), do: {:ok, update_state!(request, :cancelled)}
+
+  # Runs the action, then pushes after the transaction has committed. An accept
+  # changes the friends list for both sides; the other outcomes only change the
+  # request itself.
+  defp deliver_response(request, action) do
+    case apply_action(request, action) do
+      {:ok, updated} = ok ->
+        Broadcast.friend_request_changed(updated)
+
+        if action == :accept do
+          Broadcast.friends_changed([updated.sender_id, updated.recipient_id])
+        end
+
+        ok
+
+      other ->
+        other
+    end
+  end
 
   defp blocked_pair?(a, b) do
     from(bl in Blocking,

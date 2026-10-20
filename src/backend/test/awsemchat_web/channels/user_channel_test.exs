@@ -34,7 +34,10 @@ defmodule AwsemChatWeb.UserChannelTest do
 
     assert {:ok, message} = Chat.send_message(alice, conversation.id, message_attrs())
 
-    assert_push "message:new", %{id: id, senderId: sender_id, conversationId: conversation_id}
+    assert_push "message:new", %{
+      message: %{id: id, senderId: sender_id, conversationId: conversation_id}
+    }
+
     assert id == message.id
     assert sender_id == alice.id
     assert conversation_id == conversation.id
@@ -59,7 +62,7 @@ defmodule AwsemChatWeb.UserChannelTest do
     assert {:ok, message} = Chat.send_message(alice, conversation.id, message_attrs())
 
     # Empty the sender's own message:new so the delivered event is unambiguous.
-    assert_push "message:new", %{id: id}
+    assert_push "message:new", %{message: %{id: id}}
     assert id == message.id
 
     bob_socket = join(bob)

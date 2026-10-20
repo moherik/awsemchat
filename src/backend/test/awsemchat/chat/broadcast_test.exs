@@ -40,7 +40,7 @@ defmodule AwsemChat.Chat.BroadcastTest do
     assert_receive %Phoenix.Socket.Broadcast{
       topic: topic,
       event: "message:new",
-      payload: %{id: id, senderId: sender_id}
+      payload: %{message: %{id: id, senderId: sender_id}}
     }
 
     assert id == message.id
@@ -50,11 +50,33 @@ defmodule AwsemChat.Chat.BroadcastTest do
     assert_receive %Phoenix.Socket.Broadcast{
       topic: other_topic,
       event: "message:new",
-      payload: %{id: ^id}
+      payload: %{message: %{id: ^id}}
     }
 
     assert other_topic in [user_topic(alice), user_topic(bob)]
     assert other_topic != topic
+  end
+
+  test "message_new payload is the plan's wrapper, matching the REST envelope", %{
+    alice: alice,
+    bob: bob,
+    conversation: conversation
+  } do
+    join(bob)
+
+    assert {:ok, message} = Chat.send_message(alice, conversation.id, message_attrs())
+
+    # The wire shape is `%{"message" => envelope}` — one key holding the same
+    # map `Envelope.render/1` produces for REST, so the channel and HTTP cannot
+    # drift. The extra wrapper is what leaves room for envelope-adjacent
+    # metadata later without a breaking change.
+    assert_receive %Phoenix.Socket.Broadcast{
+      event: "message:new",
+      payload: %{message: %{id: id} = envelope}
+    }
+
+    assert id == message.id
+    assert envelope == AwsemChat.Chat.Envelope.render(message)
   end
 
   test "message_new skips a recipient whose authorization lapsed at fan-out time", %{
@@ -86,8 +108,8 @@ defmodule AwsemChat.Chat.BroadcastTest do
     alice_topic = user_topic(alice)
     bob_topic = user_topic(bob)
 
-    refute_receive %Phoenix.Socket.Broadcast{topic: ^alice_topic}, 200
-    refute_receive %Phoenix.Socket.Broadcast{topic: ^bob_topic}, 200
+    refute_receive %Phoenix.Socket.Broadcast{topic: ^alice_topic, event: "message:new"}, 200
+    refute_receive %Phoenix.Socket.Broadcast{topic: ^bob_topic, event: "message:new"}, 200
   end
 
   test "delivered carries the current acked and total counts", %{
@@ -128,7 +150,7 @@ defmodule AwsemChat.Chat.BroadcastTest do
     assert_receive %Phoenix.Socket.Broadcast{
       topic: topic,
       event: "message:new",
-      payload: %{id: id}
+      payload: %{message: %{id: id}}
     }
 
     assert topic == user_topic(bob)

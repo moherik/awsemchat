@@ -124,11 +124,14 @@ defmodule AwsemChat.BotsTest do
 
     assert_receive %Phoenix.Socket.Broadcast{
                      event: "message:new",
-                     payload: %{senderId: ^human_id}
+                     payload: %{message: %{senderId: ^human_id}}
                    },
                    1_000
 
-    refute_receive %Phoenix.Socket.Broadcast{event: "message:new", payload: %{senderId: ^bot_id}},
+    refute_receive %Phoenix.Socket.Broadcast{
+                     event: "message:new",
+                     payload: %{message: %{senderId: ^bot_id}}
+                   },
                    300
 
     refute Repo.exists?(from m in Message, where: m.sender_id == ^bot.id)
@@ -145,7 +148,7 @@ defmodule AwsemChat.BotsTest do
 
     refute_receive %Phoenix.Socket.Broadcast{
                      event: "message:new",
-                     payload: %{senderId: ^other_bot_id}
+                     payload: %{message: %{senderId: ^other_bot_id}}
                    },
                    300
 
@@ -184,7 +187,7 @@ defmodule AwsemChat.BotsTest do
     assert_receive %Phoenix.Socket.Broadcast{
                      topic: "user:" <> _,
                      event: "message:new",
-                     payload: %{senderId: ^bot_id, payload: %{"text" => text}}
+                     payload: %{message: %{senderId: ^bot_id, payload: %{"text" => text}}}
                    },
                    1_000
 

@@ -154,7 +154,7 @@ defmodule AwsemChat.Bots do
 
   defp handle_message(bot_id, payload, state) do
     with %User{} = bot <- bot(state, bot_id),
-         %{id: message_id, senderId: sender_id, conversationId: conversation_id} <-
+         %{id: message_id, senderId: sender_id, conversationId: conversation_id} = envelope <-
            message_event(payload),
          false <- message_id in state.seen,
          false <- bot?(state, sender_id),
@@ -165,7 +165,7 @@ defmodule AwsemChat.Bots do
 
       Process.send_after(
         self(),
-        {:reply, bot.id, conversation.id, sender.id, message_id, incoming_text(payload)},
+        {:reply, bot.id, conversation.id, sender.id, message_id, incoming_text(envelope)},
         delay(state)
       )
 
@@ -234,6 +234,13 @@ defmodule AwsemChat.Bots do
   defp bot(state, bot_id), do: Map.get(state.bots, bot_id)
 
   defp bot?(state, user_id), do: Map.has_key?(state.bots, user_id)
+
+  # The chat payload is the plan's wrapper, `%{"message" => envelope}` (atom keys
+  # in-process, strings once JSON-encoded). The envelope is what carries
+  # `id`/`senderId`/`conversationId`; a payload without that wrapper, or one
+  # whose envelope lacks those fields, is not an inbox item.
+  defp message_event(%{message: envelope}), do: message_event(envelope)
+  defp message_event(%{"message" => envelope}), do: message_event(envelope)
 
   defp message_event(%{id: id, senderId: sender, conversationId: conversation} = payload)
        when is_binary(id) and is_binary(sender) and is_binary(conversation),
