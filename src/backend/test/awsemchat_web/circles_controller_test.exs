@@ -64,6 +64,32 @@ defmodule AwsemChatWeb.CirclesControllerTest do
     assert body == %{"error" => %{"code" => "not_member"}}
   end
 
+  test "a duplicate pending invite returns already_invited, not a 500", %{
+    alice: alice,
+    bob: bob
+  } do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    # The first invite is a fresh pending row.
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/circles/#{circle.id}/invitations", %{"userIds" => [bob.id]})
+      |> json_response(200)
+
+    assert body["results"][bob.id] == "ok"
+
+    # The second hits the partial unique index; it must come back as a friendly
+    # per-person result, not Ecto.ConstraintError.
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/circles/#{circle.id}/invitations", %{"userIds" => [bob.id]})
+      |> json_response(200)
+
+    assert body["results"][bob.id] == "already_invited"
+  end
+
   test "inviting someone who is not a friend reports not_friends per id", %{
     alice: alice,
     carol: carol

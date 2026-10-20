@@ -299,10 +299,32 @@ defmodule AwsemChat.CirclesTest do
            ) == 1
   end
 
+  test "test_duplicate_pending_invite_is_a_friendly_result", %{alice: alice, bob: bob} do
+    assert {:ok, request} = Social.request_by_pin(alice, bob.pin)
+    assert {:ok, _} = Social.respond(bob, request.id, :accept)
+    assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+
+    assert {:ok, results} = Circles.invite(alice, circle.id, [bob.id])
+    assert results[bob.id] == :ok
+
+    assert {:ok, results2} = Circles.invite(alice, circle.id, [bob.id])
+    assert results2[bob.id] == :already_invited
+
+    # No second pending row.
+    assert Repo.aggregate(
+             from(i in CircleInvitation,
+               where: i.circle_id == ^circle.id and i.invitee_id == ^bob.id,
+               select: count(i.id)
+             ),
+             :count
+           ) == 1
+  end
+
   defp fetch_latest_invitation(circle_id, invitee_id) do
     Repo.one!(
       from(i in CircleInvitation,
-        where: i.circle_id == ^circle_id and i.invitee_id == ^invitee_id,
+        where:
+          i.circle_id == ^circle_id and i.invitee_id == ^invitee_id and i.state == :pending,
         order_by: [desc: i.inserted_at, desc: i.id],
         limit: 1
       )

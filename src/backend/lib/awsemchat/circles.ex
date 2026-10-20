@@ -216,6 +216,19 @@ defmodule AwsemChat.Circles do
       state: :pending
     })
     |> Repo.insert()
+    |> case do
+      # A pending invitation already exists (the partial unique index refused
+      # the second one). That is a per-person result, not a fault.
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        if Keyword.has_key?(errors, :circle_id) do
+          {:error, :already_invited}
+        else
+          {:error, :invalid}
+        end
+
+      other ->
+        other
+    end
   end
 
   defp normalize_id(id) when is_binary(id) do
