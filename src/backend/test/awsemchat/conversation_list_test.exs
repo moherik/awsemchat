@@ -294,8 +294,11 @@ defmodule AwsemChat.ConversationListTest do
     assert {:ok, %{conversations: list}} = Chat.list_conversations(bob, %{filter: :all})
     [conv] = Enum.filter(list, fn c -> c.id == circle.id end)
 
-    # The pre-join message is outside Bob's window: not unread.
+    # The pre-join message is outside Bob's window: not unread, and not his
+    # `lastMessage` either — the row must not carry the envelope of a message
+    # he could never list.
     assert conv.unread_count == 0
+    assert conv.last_message == nil
 
     # A message after the join is unread.
     {:ok, _post} =
@@ -308,6 +311,53 @@ defmodule AwsemChat.ConversationListTest do
     assert {:ok, %{conversations: list2}} = Chat.list_conversations(bob, %{filter: :all})
     [conv2] = Enum.filter(list2, fn c -> c.id == circle.id end)
     assert conv2.unread_count == 1
+    assert conv2.last_message.payload["text"] == "after"
+  end
+
+  test "test_late_joiner_last_message_is_newest_at_or_after_join", %{alice: alice, bob: bob} do
+    {:ok, circle} = Circles.create(alice, %{name: "Later"})
+
+    # Two messages before Bob joins.
+    {:ok, _pre1} =
+      Chat.send_message(
+        alice,
+        circle.id,
+        message_attrs(%{payload: %{"v" => 1, "text" => "before one"}})
+      )
+
+    {:ok, _pre2} =
+      Chat.send_message(
+        alice,
+        circle.id,
+        message_attrs(%{payload: %{"v" => 1, "text" => "before two"}})
+      )
+
+    {:ok, _} = Circles.invite(alice, circle.id, [bob.id])
+    inv = Repo.get_by!(CircleInvitation, circle_id: circle.id, invitee_id: bob.id)
+    {:ok, _} = Circles.respond(bob, inv.id, :accept)
+
+    assert {:ok, %{conversations: prejoin}} = Chat.list_conversations(bob, %{filter: :all})
+    [conv_pre] = Enum.filter(prejoin, fn c -> c.id == circle.id end)
+    assert conv_pre.last_message == nil
+
+    # Two after: Bob's `lastMessage` is the newest, never the prejoin pair.
+    {:ok, _post1} =
+      Chat.send_message(
+        alice,
+        circle.id,
+        message_attrs(%{payload: %{"v" => 1, "text" => "after one"}})
+      )
+
+    {:ok, _post2} =
+      Chat.send_message(
+        alice,
+        circle.id,
+        message_attrs(%{payload: %{"v" => 1, "text" => "after two"}})
+      )
+
+    assert {:ok, %{conversations: after_list}} = Chat.list_conversations(bob, %{filter: :all})
+    [conv_after] = Enum.filter(after_list, fn c -> c.id == circle.id end)
+    assert conv_after.last_message.payload["text"] == "after two"
   end
 
   test "test_left_member_circle_absent_from_list", %{alice: alice, carol: carol, circle: circle} do

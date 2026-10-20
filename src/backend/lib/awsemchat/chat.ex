@@ -1132,7 +1132,7 @@ defmodule AwsemChat.Chat do
     pref = state.prefs[conversation.id]
     position = state.positions[conversation.id]
 
-    last_message = get_last_message(conversation.id)
+    last_message = get_last_message(user, conversation)
 
     unread_count = count_unread(user, conversation, position, last_message)
 
@@ -1195,12 +1195,19 @@ defmodule AwsemChat.Chat do
     }
   end
 
-  defp get_last_message(conversation_id) do
+  # The newest message the viewer may see, so a circle late joiner's row shows
+  # no prejoin message. `visible_since/4` is `list_messages`'s own boundary:
+  # for a circle it clamps to `joined_at` (or hides everything without an
+  # active membership), for a private conversation it is a no-op. Rendering
+  # `lastMessage` without it leaked a prejoin envelope while `unreadCount`
+  # correctly read zero.
+  defp get_last_message(%User{} = user, %Conversation{} = conversation) do
     from(m in Message,
-      where: m.conversation_id == ^conversation_id,
+      where: m.conversation_id == ^conversation.id,
       order_by: [desc: m.created_at, desc: m.id],
       limit: 1
     )
+    |> visible_since(conversation, user)
     |> Repo.one()
   end
 
