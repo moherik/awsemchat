@@ -23,7 +23,16 @@ config :awsemchat, AwsemChatWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4000],
   check_origin: false,
   code_reloader: true,
-  debug_errors: true,
+  # `debug_errors: true` installs `Plug.Debugger`, which renders an HTML/markdown
+  # page holding the exception, its stacktrace, and Ecto metadata. That page is
+  # not the API contract: this is a JSON-only API, and a client that parses
+  # `{"error": {"code": ...}}` gets a stacktrace instead. `Plug.Debugger` also
+  # shadows the error handler that would otherwise answer the envelope, so it is
+  # off. The full exception and stacktrace still reach the developer: the error
+  # handler logs them server-side at `:error` level, which is where a debug page
+  # was only duplicating anyway. Set this back to `true` only if you want the
+  # debug page more than the envelope.
+  debug_errors: false,
   secret_key_base: "umJ75AoClCeV7Hczf/mygexcDrjSIkjJaoOU4CDebdd4mCQMwqF+Bs1h2FBfgm8d",
   watchers: []
 

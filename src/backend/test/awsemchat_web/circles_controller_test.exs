@@ -125,6 +125,65 @@ defmodule AwsemChatWeb.CirclesControllerTest do
     end
   end
 
+  # The success path of `GET /circles/:id/members`. This is the test that was
+  # missing: the route used to hand raw `%CircleMembership{}` structs to `Jason`,
+  # which cannot encode them, so a successful call was a 500 that only the 401
+  # test above never saw.
+  test "GET /api/v1/circles/:id/members renders the roster in camelCase", %{
+    alice: alice,
+    bob: bob
+  } do
+    {:ok, bob} = Accounts.update_profile(bob, %{"displayName" => "Bob"})
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+    {:ok, _} = Circles.invite(alice, circle.id, [bob.id])
+    invitation = fetch_invitation(circle.id, bob.id)
+    {:ok, _} = Circles.respond(bob, invitation.id, :accept)
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/#{circle.id}/members")
+      |> json_response(200)
+
+    assert length(body["members"]) == 2
+
+    owner = Enum.find(body["members"], &(&1["userId"] == alice.id))
+    member = Enum.find(body["members"], &(&1["userId"] == bob.id))
+
+    assert owner["role"] == "owner"
+    assert member["role"] == "member"
+    assert member["displayName"] == "Bob"
+
+    for row <- [owner, member] do
+      assert row["state"] == "active"
+      assert is_binary(row["joinedAt"])
+
+      for key <- ~w(userId displayName avatarMediaId role state joinedAt) do
+        assert Map.has_key?(row, key), "member row is missing #{key}"
+      end
+
+      # The roster is not `UserJSON`: a member row must not carry the search
+      # PIN, the phone, or any other member's credentials.
+      refute Map.has_key?(row, "pin")
+      refute Map.has_key?(row, "phone")
+    end
+  end
+
+  test "the member roster is ordered by join time, oldest first", %{alice: alice, bob: bob} do
+    {:ok, circle} = Circles.create(alice, %{name: "Squad"})
+    {:ok, _} = Circles.invite(alice, circle.id, [bob.id])
+    invitation = fetch_invitation(circle.id, bob.id)
+    {:ok, _} = Circles.respond(bob, invitation.id, :accept)
+
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/circles/#{circle.id}/members")
+      |> json_response(200)
+
+    assert Enum.map(body["members"], & &1["userId"]) == [alice.id, bob.id]
+  end
+
   defp fetch_invitation(circle_id, invitee_id) do
     AwsemChat.Repo.get_by!(AwsemChat.Chat.CircleInvitation,
       circle_id: circle_id,

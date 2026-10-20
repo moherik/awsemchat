@@ -29,7 +29,12 @@ config :awsemchat, AwsemChatWeb.Endpoint,
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
     formats: [json: AwsemChatWeb.ErrorJSON],
-    layout: false
+    layout: false,
+    # A thrown exception is logged at `:error` with the full exception and
+    # stacktrace. `debug_errors` is off (see `config/dev.exs`), so this log line
+    # is how a developer sees the trace that a debug page would have shown; the
+    # response body carries only the code.
+    log: :error
   ],
   pubsub_server: AwsemChat.PubSub,
   live_view: [signing_salt: "qcGEbbHS"]

@@ -12,7 +12,7 @@ defmodule AwsemChatWeb.CirclesController do
   use AwsemChatWeb, :controller
 
   alias AwsemChat.Circles
-  alias AwsemChatWeb.{CircleJSON, Errors}
+  alias AwsemChatWeb.{CircleJSON, CircleMembershipJSON, Errors}
 
   def create(conn, params) do
     case Circles.create(conn.assigns.current_user, params) do
@@ -20,7 +20,7 @@ defmodule AwsemChatWeb.CirclesController do
         conn |> put_status(:created) |> json(%{circle: CircleJSON.data(circle)})
 
       {:error, reason} ->
-        Errors.render(conn, circle_error(reason))
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
@@ -31,8 +31,11 @@ defmodule AwsemChatWeb.CirclesController do
 
   def update(conn, %{"id" => id} = params) do
     case Circles.update(conn.assigns.current_user, id, params) do
-      {:ok, circle} -> json(conn, %{circle: CircleJSON.data(circle)})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      {:ok, circle} ->
+        json(conn, %{circle: CircleJSON.data(circle)})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
@@ -40,50 +43,56 @@ defmodule AwsemChatWeb.CirclesController do
     user_ids = params["userIds"] || params["user_ids"] || []
 
     case Circles.invite(conn.assigns.current_user, id, user_ids) do
-      {:ok, results} -> json(conn, %{results: results})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      {:ok, results} ->
+        json(conn, %{results: results})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def accept_invitation(conn, %{"id" => id}) do
     case Circles.respond(conn.assigns.current_user, id, :accept) do
-      {:ok, _} -> json(conn, %{})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      {:ok, _} ->
+        json(conn, %{})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def decline_invitation(conn, %{"id" => id}) do
     case Circles.respond(conn.assigns.current_user, id, :decline) do
-      {:ok, _} -> json(conn, %{})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      {:ok, _} ->
+        json(conn, %{})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def leave(conn, %{"id" => id}) do
     case Circles.leave(conn.assigns.current_user, id) do
-      :ok -> json(conn, %{})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      :ok ->
+        json(conn, %{})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def remove_member(conn, %{"id" => id, "userId" => user_id}) do
     case Circles.remove_member(conn.assigns.current_user, id, user_id) do
-      :ok -> json(conn, %{})
-      {:error, reason} -> Errors.render(conn, circle_error(reason))
+      :ok ->
+        json(conn, %{})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def list_members(conn, %{"id" => id}) do
     members = Circles.list_members(id)
-    json(conn, %{members: members})
+    json(conn, %{members: Enum.map(members, &CircleMembershipJSON.data/1)})
   end
-
-  # Codes that say what the context's reason says pass through; the table holds
-  # their status. A changeset is the client's input failing validation, so it is
-  # a 422, not a fault of ours. Anything else is routed as an internal fault.
-  @passthrough [:not_found, :not_member, :forbidden, :circle_full, :not_friends]
-
-  defp circle_error(reason) when reason in @passthrough, do: reason
-  defp circle_error(%Ecto.Changeset{}), do: :invalid_payload
-  defp circle_error(_reason), do: :internal_error
 end

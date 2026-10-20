@@ -24,7 +24,7 @@ defmodule AwsemChatWeb.FriendsController do
         conn |> put_status(:created) |> json(FriendRequestJSON.data(request))
 
       {:error, reason} ->
-        Errors.render(conn, friend_request_error(reason))
+        Errors.render(conn, Errors.code_for(reason))
     end
   end
 
@@ -80,18 +80,10 @@ defmodule AwsemChatWeb.FriendsController do
   defp respond(conn, request_id, action) do
     case Social.respond(conn.assigns.current_user, request_id, action) do
       {:ok, request} -> json(conn, FriendRequestJSON.data(request))
-      {:error, reason} -> Errors.render(conn, friend_request_error(reason))
+      {:error, reason} -> Errors.render(conn, Errors.code_for(reason))
     end
   end
 
   defp direction(%{"direction" => "outgoing"}), do: :outgoing
   defp direction(_params), do: :incoming
-
-  # The context's reasons are its own vocabulary; this is where they become
-  # codes. A reason nobody mapped is a server fault, not a client mistake.
-  defp friend_request_error(:not_found), do: :not_found
-  defp friend_request_error(:blocked), do: :blocked
-  defp friend_request_error(:self), do: :self_request
-  defp friend_request_error(:already_friends), do: :already_friends
-  defp friend_request_error(_reason), do: :internal_error
 end

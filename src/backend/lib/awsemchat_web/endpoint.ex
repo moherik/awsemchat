@@ -54,6 +54,11 @@ defmodule AwsemChatWeb.Endpoint do
   # CORS, which the browser enforces separately, so these are the origins the
   # API answers a preflight for. A native build sends no Origin and is
   # unaffected.
+  #
+  # This is the REST API's CORS, not the channel's: `socket "/socket"` above is
+  # `longpoll: false`, so the browser opens a websocket, which CORS does not
+  # gate. If a long-poll transport is ever enabled, it needs its own origin
+  # rule here.
   plug CORSPlug,
     origin: [
       "http://localhost:8081",
@@ -64,5 +69,14 @@ defmodule AwsemChatWeb.Endpoint do
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     headers: ["Authorization", "Content-Type"]
 
+  # Unhandled exceptions are caught here, not inside a controller. `use
+  # Phoenix.Endpoint` installs `Phoenix.Endpoint.RenderErrors`, which wraps
+  # `call/2`: on a raise it renders `500.json` through `render_errors` (that is
+  # `AwsemChatWeb.ErrorJSON`, which answers the API envelope
+  # `{"error": {"code": "internal_error"}}`) and logs the exception at `:error`,
+  # then **re-raises**. The re-raise is the point: a bug still crashes the caller
+  # (and the test) instead of being swallowed into a quiet 500. `debug_errors` is
+  # off in dev so `Plug.Debugger`, which would shadow this with an HTML page
+  # carrying the stacktrace, is not installed.
   plug AwsemChatWeb.Router
 end

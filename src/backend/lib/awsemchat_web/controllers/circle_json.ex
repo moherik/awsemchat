@@ -4,9 +4,10 @@ defmodule AwsemChatWeb.CircleJSON do
 
   A circle is stored as a `conversations` row of type `:circle`, so the fields
   here are that row's circle half: identity, name, description, avatar. The
-  private-conversation bookkeeping (`private_key`) and the creator's raw id are
-  not part of what the client renders, and `Envelope`-style camelCase keeps one
-  casing across the API.
+  private-conversation bookkeeping (`private_key`) is not part of what the client
+  renders and is left out; `createdBy` is emitted on purpose — the client reads
+  it to tell which member is the owner and so which rows it may remove. The
+  `Envelope`-style camelCase keeps one casing across the API.
   """
 
   alias AwsemChat.Chat.Conversation

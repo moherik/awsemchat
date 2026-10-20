@@ -108,6 +108,16 @@ defmodule AwsemChat.AccountsTest do
     assert Accounts.normalize_phone("   ") == ""
   end
 
+  test "a plus on a trunk zero is refused, not stored as a second account" do
+    # `0811110001` normalizes to itself; without this guard `+0811110001` would
+    # normalize to `+0811110001` and create a second account for one person.
+    assert Accounts.normalize_phone("+0811110001") == ""
+    assert Accounts.normalize_phone("+0 811 110 001") == ""
+
+    assert {:error, changeset} = Accounts.request_code("+0811110001")
+    refute changeset.valid?
+  end
+
   test "a phone of separators is refused rather than stored" do
     assert {:error, changeset} = Accounts.request_code("+ () .-")
     refute changeset.valid?

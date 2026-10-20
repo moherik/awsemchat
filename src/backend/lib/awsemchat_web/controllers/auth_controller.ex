@@ -18,11 +18,10 @@ defmodule AwsemChatWeb.AuthController do
       {:ok, %{requestId: request_id}} ->
         json(conn, %{requestId: request_id})
 
-      {:error, :pin_exhausted} ->
-        Errors.render(conn, :internal_error)
-
-      {:error, _changeset} ->
-        Errors.render(conn, :invalid_phone)
+      {:error, reason} ->
+        # A bad phone is the client's input; exhaustion is a server fault. The
+        # mapping that says so lives in `Errors`, not here.
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_phone))
     end
   end
 
@@ -35,8 +34,8 @@ defmodule AwsemChatWeb.AuthController do
         json(conn, %{token: token, user: UserJSON.auth_data(user)})
 
       # `:invalid_code` and `:expired` are the same answer to the client.
-      {:error, _reason} ->
-        Errors.render(conn, :unauthorized)
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason))
     end
   end
 

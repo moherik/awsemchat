@@ -24,6 +24,9 @@ defmodule AwsemChat.Accounts do
     that account by that exact string and a `+` would invent a country code
     nobody wrote. `15550000001` becomes `+15550000001`, the same account as
     `+15550000001`.
+  - A `+` on a trunk `0` (`+0811110001`) is refused, because no country code
+    starts with `0` and accepting it would store a second account beside the
+    seeded `0811110001`. It normalizes to `""`, which the changeset refuses.
   - A phone of pure separators normalizes to `""`, which the changeset refuses
     exactly as before.
   """
@@ -222,6 +225,11 @@ defmodule AwsemChat.Accounts do
   `+4155550000`, not `+14155550000`. The app never asks a user for a number in
   that shape, so this is accepted rather than guessed at, and adding real
   country-code resolution is deferred with the SMS provider.
+
+  A `+` followed by a `0` is refused (normalized to `""`, which the changeset
+  turns into `invalid_phone`): no country code begins with `0`, so `+0811…` is
+  the trunk format wearing a `+`, and accepting it would store `+0811…` beside
+  the seeded `0811…` as a second account for one person.
   """
   def normalize_phone(phone) when is_binary(phone) do
     digits = String.replace(phone, ~r/[\s\-().]/, "")
@@ -231,6 +239,10 @@ defmodule AwsemChat.Accounts do
       # an empty phone, not a phone whose identity is `+`.
       "+" -> ""
       "" -> ""
+      # A `+` on a trunk `0` is not a country code; refuse it rather than invent
+      # a second account for the same person. (E.164 country codes never start
+      # with 0.)
+      "+0" <> _trunk -> ""
       "0" <> _trunk -> digits
       "+" <> _country -> digits
       _international -> "+" <> digits

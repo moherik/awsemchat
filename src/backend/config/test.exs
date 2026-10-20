@@ -34,5 +34,9 @@ config :awsemchat, :bots,
 # Print only warnings and errors during test
 config :logger, level: :warning
 
+# Route the deliberately-raising controller so the unhandled-exception test can
+# hit it. See `AwsemChatWeb.ErrorProbeController`.
+config :awsemchat, test_error_routes: true
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

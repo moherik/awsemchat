@@ -89,7 +89,7 @@ defmodule AwsemChat.Circles do
       from(m in CircleMembership,
         where: m.circle_id == ^circle_id and m.state == :active,
         order_by: [asc: m.joined_at, asc: m.id],
-        select: m
+        preload: [:user]
       )
     )
   end

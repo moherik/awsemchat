@@ -16,9 +16,7 @@ defmodule AwsemChatWeb.MediaController do
   def create(conn, %{"file" => %Plug.Upload{} = upload}) do
     case Media.upload(conn.assigns.current_user, upload) do
       {:ok, media} -> conn |> put_status(:created) |> json(%{mediaId: media.id})
-      {:error, :too_large} -> Errors.render(conn, :too_large)
-      {:error, :unsupported} -> Errors.render(conn, :unsupported_media_type)
-      {:error, _reason} -> Errors.render(conn, :internal_error)
+      {:error, reason} -> Errors.render(conn, Errors.code_for(reason))
     end
   end
 

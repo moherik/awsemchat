@@ -14,6 +14,13 @@ defmodule AwsemChatWeb.Router do
 
     post "/auth/request_code", AuthController, :request_code
     post "/auth/verify_code", AuthController, :verify_code
+
+    # A route that raises on purpose, for the unhandled-exception test. Routed
+    # only in the test env; see `AwsemChatWeb.ErrorProbeController`. It sits
+    # outside the Auth pipeline so the raise happens on every request.
+    if Application.compile_env(:awsemchat, :test_error_routes, false) do
+      get "/__probe/boom", ErrorProbeController, :boom
+    end
   end
 
   scope "/api/v1", AwsemChatWeb do

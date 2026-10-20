@@ -69,15 +69,21 @@ defmodule AwsemChatWeb.ConversationsController do
 
   def list_messages(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.list_messages(conn.assigns.current_user, conversation_id, params) do
-      {:ok, page} -> json(conn, MessageJSON.page(page))
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, page} ->
+        json(conn, MessageJSON.page(page))
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def send_message(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.send_message(conn.assigns.current_user, conversation_id, params) do
-      {:ok, message} -> conn |> put_status(:created) |> json(MessageJSON.data(message))
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, message} ->
+        conn |> put_status(:created) |> json(MessageJSON.data(message))
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
@@ -87,15 +93,21 @@ defmodule AwsemChatWeb.ConversationsController do
   # refused exactly as they are for messages.
   def list_media(conn, %{"id" => conversation_id} = params) do
     case Chat.list_shared_media(conn.assigns.current_user, conversation_id, params) do
-      {:ok, page} -> json(conn, SharedMediaJSON.page(page))
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, page} ->
+        json(conn, SharedMediaJSON.page(page))
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
   def index(conn, params) do
     case Chat.list_conversations(conn.assigns.current_user, params) do
-      {:ok, page} -> json(conn, ConversationJSON.page(page))
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, page} ->
+        json(conn, ConversationJSON.page(page))
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
@@ -103,8 +115,11 @@ defmodule AwsemChatWeb.ConversationsController do
     attrs = Map.drop(params, ["id"])
 
     case Chat.put_preferences(conn.assigns.current_user, conversation_id, attrs) do
-      {:ok, _pref} -> json(conn, %{ok: true})
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, _pref} ->
+        json(conn, %{ok: true})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
 
@@ -112,31 +127,11 @@ defmodule AwsemChatWeb.ConversationsController do
     message_id = params["messageId"] || params["message_id"] || params["lastSeenMessageId"]
 
     case Chat.put_position(conn.assigns.current_user, conversation_id, message_id) do
-      {:ok, _pos} -> json(conn, %{ok: true})
-      {:error, reason} -> Errors.render(conn, chat_error(reason))
+      {:ok, _pos} ->
+        json(conn, %{ok: true})
+
+      {:error, reason} ->
+        Errors.render(conn, Errors.code_for(reason, changeset: :invalid_payload))
     end
   end
-
-  # The context's reasons are its own vocabulary. Codes that already say exactly
-  # what the reason says pass through; the table holds their status.
-  @passthrough [
-    :not_found,
-    :not_member,
-    :conversation_read_only,
-    :blocked,
-    :payload_too_large,
-    :invalid_kind,
-    :invalid_client_op_id,
-    :invalid_cursor,
-    :invalid_payload,
-    :send_failed
-  ]
-
-  defp chat_error(reason) when reason in @passthrough, do: reason
-  # The context's own validation vocabulary, which arrives as a changeset rather
-  # than an atom: the client's input failed, so it is a 422.
-  defp chat_error(%Ecto.Changeset{}), do: :invalid_payload
-  # A reason nobody mapped is a server fault, not a client mistake: 500
-  # `internal_error`, with nothing of the reason echoed back.
-  defp chat_error(_reason), do: :internal_error
 end

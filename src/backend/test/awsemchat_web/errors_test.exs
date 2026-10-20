@@ -125,4 +125,76 @@ defmodule AwsemChatWeb.ErrorsTest do
     assert :internal_error in Errors.codes()
     assert length(Errors.codes()) == length(@table)
   end
+
+  test "code_for/2 is the one reason-to-code map, and its values do not drift" do
+    # Circle reasons
+    assert Errors.code_for(:not_found) == :not_found
+    assert Errors.code_for(:not_member) == :not_member
+    assert Errors.code_for(:forbidden) == :forbidden
+    assert Errors.code_for(:circle_full) == :circle_full
+    assert Errors.code_for(:not_friends) == :not_friends
+    # Chat reasons
+    assert Errors.code_for(:conversation_read_only) == :conversation_read_only
+    assert Errors.code_for(:blocked) == :blocked
+    assert Errors.code_for(:payload_too_large) == :payload_too_large
+    assert Errors.code_for(:invalid_kind) == :invalid_kind
+    assert Errors.code_for(:invalid_client_op_id) == :invalid_client_op_id
+    assert Errors.code_for(:invalid_cursor) == :invalid_cursor
+    assert Errors.code_for(:invalid_payload) == :invalid_payload
+    assert Errors.code_for(:send_failed) == :send_failed
+    # Friend-request reasons
+    assert Errors.code_for(:self) == :self_request
+    assert Errors.code_for(:already_friends) == :already_friends
+    # Media reasons
+    assert Errors.code_for(:too_large) == :too_large
+    assert Errors.code_for(:unsupported) == :unsupported_media_type
+    # Auth reasons: a wrong and an expired code are the same answer
+    assert Errors.code_for(:invalid_code) == :unauthorized
+    assert Errors.code_for(:expired) == :unauthorized
+    assert Errors.code_for(:pin_exhausted) == :internal_error
+    # Unmapped is a server fault
+    assert Errors.code_for(:nobody_mapped_this) == :internal_error
+  end
+
+  test "every code code_for/2 can return is a declared code" do
+    reasons = [
+      :not_found,
+      :not_member,
+      :forbidden,
+      :circle_full,
+      :not_friends,
+      :conversation_read_only,
+      :blocked,
+      :payload_too_large,
+      :invalid_kind,
+      :invalid_client_op_id,
+      :invalid_cursor,
+      :invalid_payload,
+      :send_failed,
+      :self,
+      :already_friends,
+      :too_large,
+      :unsupported,
+      :invalid_code,
+      :expired,
+      :pin_exhausted
+    ]
+
+    for reason <- reasons, do: assert(Errors.known?(Errors.code_for(reason)))
+    assert Errors.known?(Errors.code_for(:anything_else))
+  end
+
+  test "a changeset's code is the caller's choice, defaulting to a server fault" do
+    changeset =
+      {%{}, %{phone: :string}}
+      |> Ecto.Changeset.cast(%{"phone" => nil}, [:phone])
+      |> Ecto.Changeset.validate_required([:phone])
+
+    # Circle and chat callers mean "the client's input was invalid".
+    assert Errors.code_for(changeset, changeset: :invalid_payload) == :invalid_payload
+    # Auth means "the phone was invalid".
+    assert Errors.code_for(changeset, changeset: :invalid_phone) == :invalid_phone
+    # A caller that says nothing gets the pre-consolidation answer: 500.
+    assert Errors.code_for(changeset) == :internal_error
+  end
 end
