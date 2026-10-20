@@ -85,7 +85,7 @@ defmodule AwsemChatWeb.UserChannelTest do
   } do
     join(bob)
 
-    assert {:ok, _message} = Chat.send_message(alice, conversation.id, message_attrs())
+    assert {:ok, message} = Chat.send_message(alice, conversation.id, message_attrs())
 
     assert_receive %Phoenix.Socket.Broadcast{
       topic: topic,
@@ -101,11 +101,17 @@ defmodule AwsemChatWeb.UserChannelTest do
              |> delete("/api/v1/friends/#{bob.id}")
              |> json_response(200)
 
-    # The send gate refuses the second message, and no fan-out leaks regardless.
+    # The send gate refuses the second message.
     assert {:error, :conversation_read_only} =
              Chat.send_message(alice, conversation.id, message_attrs())
 
     refute_receive %Phoenix.Socket.Broadcast{topic: ^topic, event: "message:new"}, 200
+
+    # Even if a broadcast is triggered again (fan-out must re-check auth),
+    # a recipient who lost friendship must not receive it.
+    AwsemChat.Chat.Broadcast.message_new(message)
+    refute_receive %Phoenix.Socket.Broadcast{topic: ^topic, event: "message:new"}, 200
+    assert AwsemChat.Chat.authorized_recipients(conversation.id) == []
   end
 
   test "test_ack_does_not_flip_another_users_delivery", %{

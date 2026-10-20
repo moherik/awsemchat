@@ -30,7 +30,8 @@ defmodule AwsemChatWeb.UserChannel do
   def join(_topic, _payload, _socket), do: {:error, %{reason: "unauthorized"}}
 
   @impl true
-  def handle_in("message:ack", %{"messageId" => message_id}, socket) do
+  def handle_in("message:ack", %{"messageId" => message_id}, socket)
+      when is_binary(message_id) and byte_size(message_id) > 0 do
     case Accounts.get_by_id(socket.assigns.user_id) do
       %{} = user ->
         :ok = Chat.ack_delivered(user, message_id)
@@ -39,6 +40,10 @@ defmodule AwsemChatWeb.UserChannel do
       nil ->
         {:reply, {:error, %{reason: "unauthorized"}}, socket}
     end
+  end
+
+  def handle_in("message:ack", _payload, socket) do
+    {:reply, {:error, %{reason: "bad_request"}}, socket}
   end
 
   def handle_in(_event, _payload, socket), do: {:noreply, socket}

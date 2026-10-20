@@ -25,8 +25,9 @@ defmodule AwsemChatWeb.UserSocket do
 
   def connect(_params, _socket, _connect_info), do: :error
 
-  # One connection per user, so a reconnect replaces the previous socket rather
-  # than fanning out to a second live connection the client has abandoned.
+  # Each connection gets its own id, so multiple devices can be connected
+  # simultaneously and all receive broadcasts on the user's topic.
   @impl true
-  def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+  def id(socket),
+    do: "user_socket:#{socket.assigns.user_id}:#{System.unique_integer([:positive])}"
 end

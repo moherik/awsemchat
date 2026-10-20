@@ -209,12 +209,15 @@ defmodule AwsemChat.Chat do
         |> Enum.reject(&is_nil/1)
 
       [a, b] ->
-        if blocked_pair?(a, b), do: [], else: [a, b]
+        if private_recipients_allowed?(a, b), do: [a, b], else: []
     end
   end
 
-  defp blocked_pair?(a, b) do
-    Social.blocked_either?(%User{id: a}, %User{id: b})
+  defp private_recipients_allowed?(a, b) do
+    peer_a = %User{id: a}
+    peer_b = %User{id: b}
+
+    Social.send_allowed?(peer_a, peer_b)
   end
 
   defp fetch_own_delivery(%User{id: user_id}, message_id) do
