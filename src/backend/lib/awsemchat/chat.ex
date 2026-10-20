@@ -309,8 +309,9 @@ defmodule AwsemChat.Chat do
   forever. Recorded explicitly instead, exempting them from the completeness
   count. Returns the number of rows changed.
 
-  Called by the circle-removal path (Task 6); today nothing invokes it because
-  circle membership does not exist yet.
+  Called by the circle-removal paths: `Circles.leave/2` and
+  `Circles.remove_member/3` invoke it inside their transaction when a member's
+  membership ends.
   """
   def mark_recipient_unreachable(user_id, conversation_id) do
     {count, _} =
