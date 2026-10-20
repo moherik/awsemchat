@@ -59,6 +59,20 @@ defmodule AwsemChat.Chat.Broadcast do
     :ok
   end
 
+  def moment_changed(%{conversation_id: conversation_id, moment_id: moment_id, change: change}) do
+    conversation_id
+    |> Chat.authorized_recipients()
+    |> Enum.each(
+      &broadcast(&1, "moment:changed", %{
+        conversationId: conversation_id,
+        momentId: moment_id,
+        change: change
+      })
+    )
+
+    :ok
+  end
+
   defp broadcast(user_id, event, payload) do
     AwsemChatWeb.Endpoint.broadcast("user:" <> user_id, event, payload)
   end
