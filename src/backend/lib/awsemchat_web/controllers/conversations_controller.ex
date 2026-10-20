@@ -62,6 +62,11 @@ defmodule AwsemChatWeb.ConversationsController do
 
   defp render_error(conn, :invalid_kind), do: error(conn, :unprocessable_entity, :invalid_kind)
 
+  defp render_error(conn, :invalid_client_op_id),
+    do: error(conn, :unprocessable_entity, :invalid_client_op_id)
+
+  defp render_error(conn, :invalid_cursor), do: error(conn, :bad_request, :invalid_cursor)
+
   defp render_error(conn, :invalid_payload),
     do: error(conn, :unprocessable_entity, :invalid_payload)
 

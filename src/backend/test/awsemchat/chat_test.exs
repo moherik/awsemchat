@@ -188,6 +188,63 @@ defmodule AwsemChat.ChatTest do
     assert Repo.aggregate(Message, :count) == 0
   end
 
+  test "test_non_uuid_client_op_id_is_rejected_not_raised", %{
+    alice: alice,
+    conversation: conv
+  } do
+    # The column is `:binary_id`; passing this into the equality query would
+    # raise `Ecto.Query.CastError` (a 500) instead of a clean error tuple.
+    assert {:error, :invalid_client_op_id} =
+             Chat.send_message(alice, conv.id, message_attrs(%{clientOpId: "not-a-uuid"}))
+
+    assert Repo.aggregate(Message, :count) == 0
+  end
+
+  test "test_non_uuid_reply_id_is_not_found_not_raised", %{alice: alice, conversation: conv} do
+    # The existing malformed-reply test only covers valid UUIDs with a bogus
+    # kind; a non-UUID id reaches `Repo.get(Message, id)` and would raise.
+    assert {:error, :not_found} =
+             Chat.send_message(
+               alice,
+               conv.id,
+               message_attrs(%{replyTo: %{kind: "message", id: "not-a-uuid"}})
+             )
+
+    assert Repo.aggregate(Message, :count) == 0
+  end
+
+  test "test_malformed_cursor_is_rejected", %{alice: alice, conversation: conv} do
+    send_text(alice, conv.id, "hello")
+
+    for cursor <- ["not-a-cursor", Base.url_encode64("nonsense", padding: false)] do
+      assert {:error, :invalid_cursor} = Chat.list_messages(alice, conv.id, %{cursor: cursor})
+    end
+  end
+
+  test "test_idempotent_send_under_concurrency_inserts_one_row", %{
+    alice: alice,
+    conversation: conv
+  } do
+    attrs = message_attrs()
+
+    # A barrier makes every sender pass the "does it exist yet?" precheck before
+    # any of them inserts, which forces the unique-constraint race and exercises
+    # the rescue branch in `persist/7`. Without the barrier the precheck
+    # serialises the callers and the branch is never reached.
+    results = concurrent_sends(alice, conv.id, attrs)
+
+    # The race must not 500 or duplicate: every caller either wins or is handed
+    # the winner's row, and exactly one message plus one delivery set exists.
+    assert Enum.all?(results, &match?({:ok, %Message{}}, &1))
+
+    ids = results |> Enum.map(fn {:ok, message} -> message.id end) |> Enum.uniq()
+    assert [_single] = ids
+
+    assert Repo.aggregate(Message, :count) == 1
+    assert Repo.aggregate(Delivery, :count) == 2
+    assert length(Chat.list_deliveries(hd(results) |> elem(1))) == 2
+  end
+
   test "test_send_by_non_member_is_not_member", %{
     carol: carol,
     conversation: conv
@@ -378,6 +435,36 @@ defmodule AwsemChat.ChatTest do
   } do
     assert %{id: _} = Chat.get_conversation(alice, conv.id)
     assert Chat.get_conversation(carol, conv.id) == nil
+  end
+
+  defp concurrent_sends(user, conversation_id, attrs, count \\ 8) do
+    parent = self()
+    gate = make_ref()
+
+    pids =
+      for _ <- 1..count do
+        spawn(fn ->
+          send(parent, {:ready, self()})
+
+          receive do
+            {:go, ^gate} -> :ok
+          end
+
+          send(parent, {:sent, Chat.send_message(user, conversation_id, attrs)})
+        end)
+      end
+
+    # Raw processes do not inherit the sandbox checkout the way `Task.async`
+    # does, so allow each one explicitly before releasing the barrier.
+    Enum.each(pids, &Ecto.Adapters.SQL.Sandbox.allow(Repo, parent, &1))
+
+    for _ <- pids, do: assert_receive({:ready, _pid}, 5_000)
+    Enum.each(pids, &send(&1, {:go, gate}))
+
+    for _ <- pids do
+      assert_receive({:sent, result}, 5_000)
+      result
+    end
   end
 
   defp send_text(user, conversation_id, text) do

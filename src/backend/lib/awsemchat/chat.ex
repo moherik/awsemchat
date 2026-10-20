@@ -57,7 +57,7 @@ defmodule AwsemChat.Chat do
   message or its deliveries.
 
   Errors: `:not_found`, `:not_member`, `:conversation_read_only`, `:blocked`,
-  `:payload_too_large`, `:invalid_kind`.
+  `:payload_too_large`, `:invalid_kind`, `:invalid_client_op_id`.
   """
   def send_message(%User{} = sender, conversation_id, attrs) when is_map(attrs) do
     with {:ok, conversation} <- fetch_visible_conversation(sender, conversation_id),
@@ -81,21 +81,14 @@ defmodule AwsemChat.Chat do
 
   Options: `:limit` (default #{@default_page}), `:cursor`.
 
-  Errors: `:not_found`, `:not_member`.
+  Errors: `:not_found`, `:not_member`, `:invalid_cursor`.
   """
   def list_messages(%User{} = user, conversation_id, opts \\ %{}) do
-    with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id) do
+    with {:ok, conversation} <- fetch_visible_conversation(user, conversation_id),
+         {:ok, query} <- cursor_query(conversation, opts) do
       limit = page_limit(opts)
 
-      query =
-        from(m in Message,
-          where: m.conversation_id == ^conversation.id,
-          order_by: [desc: m.created_at, desc: m.id],
-          limit: ^(limit + 1)
-        )
-        |> apply_cursor(opts)
-
-      messages = Repo.all(query)
+      messages = Repo.all(from(m in query, limit: ^(limit + 1)))
       {page, rest} = Enum.split(messages, limit)
 
       {:ok,
@@ -104,6 +97,14 @@ defmodule AwsemChat.Chat do
          nextCursor: next_cursor(page, rest)
        }}
     end
+  end
+
+  defp cursor_query(conversation, opts) do
+    from(m in Message,
+      where: m.conversation_id == ^conversation.id,
+      order_by: [desc: m.created_at, desc: m.id]
+    )
+    |> apply_cursor(opts)
   end
 
   @doc """
@@ -139,8 +140,32 @@ defmodule AwsemChat.Chat do
   # --- send internals -------------------------------------------------------
 
   defp persist(sender, conversation, kind, payload, media_ids, attrs, reply_to_message_id) do
-    client_op_id = normalize_client_op_id(attrs)
+    case normalize_client_op_id(attrs) do
+      :invalid ->
+        {:error, :invalid_client_op_id}
 
+      client_op_id ->
+        persist_message(
+          sender,
+          conversation,
+          kind,
+          payload,
+          media_ids,
+          client_op_id,
+          reply_to_message_id
+        )
+    end
+  end
+
+  defp persist_message(
+         sender,
+         conversation,
+         kind,
+         payload,
+         media_ids,
+         client_op_id,
+         reply_to_message_id
+       ) do
     case existing_message(sender, client_op_id) do
       %Message{} = existing ->
         {:ok, existing}
@@ -267,11 +292,18 @@ defmodule AwsemChat.Chat do
       %{kind: :message, id: message_id} ->
         # A quote must come from this conversation: quoting across audiences
         # would leak the existence of a message the sender cannot be shown.
-        case Repo.get(Message, message_id) do
-          %Message{conversation_id: conversation_id} when conversation_id == conversation.id ->
-            {:ok, message_id}
+        case parse_message_id(message_id) do
+          {:ok, uuid} ->
+            case Repo.get(Message, uuid) do
+              %Message{conversation_id: conversation_id}
+              when conversation_id == conversation.id ->
+                {:ok, uuid}
 
-          _ ->
+              _ ->
+                {:error, :not_found}
+            end
+
+          :error ->
             {:error, :not_found}
         end
 
@@ -282,6 +314,15 @@ defmodule AwsemChat.Chat do
       # unreachable target: the send is refused rather than raising.
       _other ->
         {:error, :not_found}
+    end
+  end
+
+  # The id column is `:binary_id`; an unparseable value must be refused rather
+  # than handed to `Repo.get/2`, which would raise `Ecto.Query.CastError`.
+  defp parse_message_id(message_id) do
+    case Ecto.UUID.cast(message_id) do
+      {:ok, uuid} -> {:ok, uuid}
+      :error -> :error
     end
   end
 
@@ -343,8 +384,17 @@ defmodule AwsemChat.Chat do
 
   defp normalize_client_op_id(attrs) do
     case fetch_attr(attrs, :clientOpId) || fetch_attr(attrs, :client_op_id) do
-      nil -> Ecto.UUID.generate()
-      value -> value
+      nil ->
+        Ecto.UUID.generate()
+
+      value ->
+        # The column is `:binary_id`, so an unparseable id must be refused here.
+        # Passing it into `existing_message/2` would raise `Ecto.Query.CastError`
+        # and surface as a 500 with the wrong envelope instead of a clean 422.
+        case Ecto.UUID.cast(value) do
+          {:ok, uuid} -> uuid
+          :error -> :invalid
+        end
     end
   end
 
@@ -419,7 +469,7 @@ defmodule AwsemChat.Chat do
 
   defp apply_cursor(query, opts) do
     case fetch_attr(opts, :cursor) do
-      nil -> query
+      nil -> {:ok, query}
       cursor -> where_before(query, cursor)
     end
   end
@@ -427,14 +477,18 @@ defmodule AwsemChat.Chat do
   defp where_before(query, cursor) do
     case decode_cursor(cursor) do
       {:ok, %{created_at: created_at, id: id}} ->
-        where(
-          query,
-          [m],
-          m.created_at < ^created_at or (m.created_at == ^created_at and m.id < ^id)
-        )
+        {:ok,
+         where(
+           query,
+           [m],
+           m.created_at < ^created_at or (m.created_at == ^created_at and m.id < ^id)
+         )}
 
+      # A cursor we did not mint is a client error, not a request for page one.
+      # Silently returning the newest page would re-serve messages the caller
+      # already has, so refuse it instead.
       :error ->
-        query
+        {:error, :invalid_cursor}
     end
   end
 

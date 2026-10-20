@@ -315,6 +315,56 @@ defmodule AwsemChatWeb.ConversationsControllerTest do
     refute inspect(friend) =~ "phone"
   end
 
+  test "POST /api/v1/conversations/:id/messages with a non-UUID clientOpId is 422", %{
+    alice: alice,
+    conversation: conversation
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/conversations/#{conversation.id}/messages", %{
+        "clientOpId" => "not-a-uuid",
+        "kind" => "text",
+        "payload" => %{"v" => 1}
+      })
+      |> json_response(422)
+
+    assert body == %{"error" => %{"code" => "invalid_client_op_id"}}
+    assert AwsemChat.Repo.aggregate(AwsemChat.Chat.Message, :count) == 0
+  end
+
+  test "POST /api/v1/conversations/:id/messages with a non-UUID replyTo.id is 404", %{
+    alice: alice,
+    conversation: conversation
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> post("/api/v1/conversations/#{conversation.id}/messages", %{
+        "clientOpId" => Ecto.UUID.generate(),
+        "kind" => "text",
+        "payload" => %{"v" => 1},
+        "replyTo" => %{"kind" => "message", "id" => "not-a-uuid"}
+      })
+      |> json_response(404)
+
+    assert body == %{"error" => %{"code" => "not_found"}}
+    assert AwsemChat.Repo.aggregate(AwsemChat.Chat.Message, :count) == 0
+  end
+
+  test "GET /api/v1/conversations/:id/messages with a malformed cursor is 400", %{
+    alice: alice,
+    conversation: conversation
+  } do
+    body =
+      build_conn()
+      |> authenticate(alice.token)
+      |> get("/api/v1/conversations/#{conversation.id}/messages?cursor=not-a-cursor")
+      |> json_response(400)
+
+    assert body == %{"error" => %{"code" => "invalid_cursor"}}
+  end
+
   test "POST /api/v1/friends/requests plus accept creates the friendship", %{bob: bob} do
     carol = create_user("+15550005005")
 
