@@ -245,6 +245,25 @@ defmodule AwsemChat.ChatTest do
     assert length(Chat.list_deliveries(hd(results) |> elem(1))) == 2
   end
 
+  test "test_losing_send_racer_always_gets_the_winner_never_conflict", %{
+    alice: alice,
+    conversation: conv
+  } do
+    # Task 4's carry-forward: the post-rollback branch used to return
+    # `{:error, :conflict}`, which fell through to a bare 500. The only rollback
+    # this send path can produce is the unique index on
+    # `(sender_id, client_op_id)`, and under READ COMMITTED a losing racer only
+    # sees the constraint violation after the winner has committed — so the
+    # winner's row is always re-readable. Every caller must get `{:ok, _}`; a
+    # bare conflict must be impossible.
+    results = concurrent_sends(alice, conv.id, message_attrs())
+
+    assert Enum.all?(results, &match?({:ok, %Message{}}, &1)),
+           "a losing racer produced an error tuple: #{inspect(results)}"
+
+    refute Enum.any?(results, &match?({:error, :conflict}, &1))
+  end
+
   test "test_send_by_non_member_is_not_member", %{
     carol: carol,
     conversation: conv

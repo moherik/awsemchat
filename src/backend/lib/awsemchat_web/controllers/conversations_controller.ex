@@ -70,6 +70,12 @@ defmodule AwsemChatWeb.ConversationsController do
   defp render_error(conn, :invalid_payload),
     do: error(conn, :unprocessable_entity, :invalid_payload)
 
+  # The send could not be committed — an internal fault (the message or its
+  # delivery rows failed to write and the whole transaction rolled back), not a
+  # client mistake and not a retryable conflict.
+  defp render_error(conn, :send_failed),
+    do: error(conn, :internal_server_error, :send_failed)
+
   defp render_error(conn, _reason), do: error(conn, :internal_server_error, :internal_error)
 
   defp error(conn, status, code) do

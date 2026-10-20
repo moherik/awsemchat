@@ -21,7 +21,7 @@ defmodule AwsemChat.Chat do
   import Ecto.Query
 
   alias AwsemChat.Accounts.User
-  alias AwsemChat.Chat.{Conversation, Delivery, Message}
+  alias AwsemChat.Chat.{Broadcast, Conversation, Delivery, Message}
   alias AwsemChat.Media
   alias AwsemChat.Repo
   alias AwsemChat.Social
@@ -115,6 +115,129 @@ defmodule AwsemChat.Chat do
   end
 
   @doc """
+  Records device receipt of `message_id` by `user`.
+
+  Flips that user's own pending delivery row to delivered and pushes
+  `message:delivered` to the sender with the current counts. Always `:ok`:
+
+  - a user with no row for this message — they were never an intended recipient
+    — has nothing to flip and nothing is broadcast, so the call cannot be used
+    to probe which messages exist;
+  - a row that is already delivered is left alone and not re-broadcast, so a
+    retried ack does not spam the sender.
+
+  The lookup is keyed on `(message_id, user_id)`, so a user can only ever touch
+  their own row; there is no code path that flips someone else's delivery.
+  """
+  def ack_delivered(%User{} = user, message_id) do
+    case fetch_own_delivery(user, message_id) do
+      nil ->
+        :ok
+
+      %Delivery{delivered_at: nil} = delivery ->
+        mark_delivered(delivery)
+        notify_sender(message_id)
+        :ok
+
+      %Delivery{} ->
+        :ok
+    end
+  end
+
+  @doc """
+  A message's delivery counts: `delivered` (rows that have acked) and `total`
+  (still-reachable intended recipients).
+
+  `total` excludes recipients recorded unreachable, so completion is
+  `delivered == total` and is never claimed because the outstanding recipients
+  can no longer receive.
+  """
+  def delivery_counts(%Message{id: message_id}) do
+    query = from(d in Delivery, where: d.message_id == ^message_id)
+
+    %{
+      delivered: Repo.aggregate(from(d in query, where: not is_nil(d.delivered_at)), :count),
+      total: Repo.aggregate(from(d in query, where: d.reachable == true), :count)
+    }
+  end
+
+  @doc """
+  Marks `user_id`'s still-pending deliveries in `conversation_id` unreachable.
+
+  A recipient who leaves or is removed from a circle can no longer ack, so
+  leaving their rows pending would keep the message "sent but not delivered"
+  forever. Recorded explicitly instead, exempting them from the completeness
+  count. Returns the number of rows changed.
+
+  Called by the circle-removal path (Task 6); today nothing invokes it because
+  circle membership does not exist yet.
+  """
+  def mark_recipient_unreachable(user_id, conversation_id) do
+    {count, _} =
+      from(d in Delivery,
+        join: m in Message,
+        on: m.id == d.message_id,
+        where:
+          m.conversation_id == ^conversation_id and d.user_id == ^user_id and
+            d.reachable == true and is_nil(d.delivered_at)
+      )
+      |> Repo.update_all(set: [reachable: false])
+
+    count
+  end
+
+  @doc """
+  The ids that may currently receive a message in `conversation_id`.
+
+  Recomputed from the conversation, not from any stored snapshot, and it is
+  exactly what `Chat.Broadcast.message_new/1` fans out to. A participant with a
+  block in either direction is excluded; a private conversation's membership is
+  the participant pair, and a circle's is its active members plus its creator
+  (until Task 6 supplies the membership table).
+  """
+  def authorized_recipients(conversation_id) do
+    case fetch_conversation(conversation_id) do
+      nil -> []
+      %Conversation{} = conversation -> visible_recipients(conversation)
+    end
+  end
+
+  defp visible_recipients(%Conversation{} = conversation) do
+    case Conversation.participant_ids(conversation) do
+      nil ->
+        Enum.uniq([conversation.created_by | circle_members(conversation.id)])
+        |> Enum.reject(&is_nil/1)
+
+      [a, b] ->
+        if blocked_pair?(a, b), do: [], else: [a, b]
+    end
+  end
+
+  defp blocked_pair?(a, b) do
+    Social.blocked_either?(%User{id: a}, %User{id: b})
+  end
+
+  defp fetch_own_delivery(%User{id: user_id}, message_id) do
+    case Ecto.UUID.cast(message_id) do
+      {:ok, uuid} -> Repo.get_by(Delivery, message_id: uuid, user_id: user_id)
+      :error -> nil
+    end
+  end
+
+  defp mark_delivered(%Delivery{} = delivery) do
+    delivery
+    |> Ecto.Changeset.change(delivered_at: DateTime.truncate(DateTime.utc_now(), :second))
+    |> Repo.update()
+  end
+
+  defp notify_sender(message_id) do
+    case Repo.get(Message, message_id) do
+      %Message{} = message -> Broadcast.delivered(message)
+      nil -> :ok
+    end
+  end
+
+  @doc """
   The media ids a message references, in the order they were sent.
   """
   def media_ids(%Message{id: message_id}), do: Media.media_ids_for_message(message_id)
@@ -186,19 +309,38 @@ defmodule AwsemChat.Chat do
           record_media(message, media_ids, audience)
           message
         end)
-        |> case do
-          {:ok, %Message{} = message} ->
-            {:ok, message}
-
-          # A concurrent retry of the same clientOpId won the insert race; the
-          # winner's row is the answer either way.
-          {:error, _reason} ->
-            case existing_message(sender, client_op_id) do
-              %Message{} = existing -> {:ok, existing}
-              nil -> {:error, :conflict}
-            end
-        end
+        |> resolve_commit(sender, client_op_id)
     end
+  end
+
+  # The transaction committed: this is a genuinely new message, so fan it out.
+  # The broadcast happens here, after commit, never inside the transaction — a
+  # client must not receive an event for a message that then rolls back.
+  defp resolve_commit({:ok, %Message{} = message}, _sender, _client_op_id) do
+    Broadcast.message_new(message)
+    {:ok, message}
+  end
+
+  # The only rollback this path can produce is the unique index on
+  # `(sender_id, client_op_id)`: a concurrent retry of the same `clientOpId`
+  # committed first. Under READ COMMITTED the losing INSERT blocks until the
+  # winner commits and only then reports the violation, so the winner's row is
+  # already visible and is the answer for every caller. There is no separate
+  # "conflict" outcome to report — the loser is simply handed the winner.
+  defp resolve_commit({:error, :race}, sender, client_op_id) do
+    case existing_message(sender, client_op_id) do
+      %Message{} = existing -> {:ok, existing}
+      # Unreachable for the race above; a message insert that failed for any
+      # other reason is an internal fault, not a client conflict.
+      nil -> {:error, :send_failed}
+    end
+  end
+
+  # Writing the delivery rows failed, so the transaction rolled the message
+  # back: nothing partial commits. This is a server-side fault, reported as
+  # such rather than as a retryable conflict.
+  defp resolve_commit({:error, :send_failed}, _sender, _client_op_id) do
+    {:error, :send_failed}
   end
 
   defp insert_message!(sender, conversation, attrs) do
@@ -208,8 +350,19 @@ defmodule AwsemChat.Chat do
          )
          |> Repo.insert() do
       {:ok, message} -> message
-      {:error, changeset} -> Repo.rollback(changeset)
+      {:error, changeset} -> Repo.rollback(message_rollback_reason(changeset))
     end
+  end
+
+  # The idempotency unique index is reported against `:sender_id` (Ecto names a
+  # composite constraint after its first column) — that specific constraint is
+  # the race. Anything else is an internal fault.
+  defp message_rollback_reason(%{errors: errors}) do
+    if Enum.any?(errors, &unique_sender_op_id?/1), do: :race, else: :send_failed
+  end
+
+  defp unique_sender_op_id?({_field, {_message, opts}}) do
+    opts[:constraint_name] == "messages_sender_id_client_op_id_index"
   end
 
   # One pending delivery per intended recipient. A failure rolls the whole send
@@ -218,7 +371,7 @@ defmodule AwsemChat.Chat do
     Enum.each(audience, fn user_id ->
       case %Delivery{} |> Delivery.changeset(message.id, user_id) |> Repo.insert() do
         {:ok, _delivery} -> :ok
-        {:error, changeset} -> Repo.rollback(changeset)
+        {:error, _changeset} -> Repo.rollback(:send_failed)
       end
     end)
   end
