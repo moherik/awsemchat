@@ -13,26 +13,26 @@ defmodule AwsemChatWeb.ConversationsController do
   alias AwsemChat.Accounts
   alias AwsemChat.Chat
   alias AwsemChat.Social
-  alias AwsemChatWeb.{ConversationJSON, ErrorJSON, MessageJSON, SharedMediaJSON}
+  alias AwsemChatWeb.{ConversationJSON, Errors, MessageJSON, SharedMediaJSON}
 
   def create(conn, %{"peerUserId" => peer_id}) do
     user = conn.assigns.current_user
 
     case Accounts.get_by_id(peer_id) do
       nil ->
-        error(conn, :not_found, :user_not_found)
+        Errors.render(conn, :user_not_found)
 
       %{} = peer ->
         if Social.send_allowed?(user, peer) do
           {:ok, conversation} = Social.private_conversation(user, peer)
           json(conn, ConversationJSON.data(conversation, peer: peer))
         else
-          error(conn, :forbidden, :not_friends)
+          Errors.render(conn, :not_friends)
         end
     end
   end
 
-  def create(conn, _params), do: error(conn, :bad_request, :peer_user_id_required)
+  def create(conn, _params), do: Errors.render(conn, :peer_user_id_required)
 
   # Opening metadata for a conversation the caller can already see, including a
   # read-only one: after unfriend/block `POST /conversations` is refused (it
@@ -44,7 +44,7 @@ defmodule AwsemChatWeb.ConversationsController do
 
     case Chat.get_conversation(user, conversation_id) do
       nil ->
-        render_error(conn, not_found_or_forbidden(conversation_id))
+        Errors.render(conn, not_found_or_forbidden(conversation_id))
 
       conversation ->
         json(conn, ConversationJSON.data(conversation, peer_opts(user, conversation)))
@@ -70,14 +70,14 @@ defmodule AwsemChatWeb.ConversationsController do
   def list_messages(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.list_messages(conn.assigns.current_user, conversation_id, params) do
       {:ok, page} -> json(conn, MessageJSON.page(page))
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
   def send_message(conn, %{"conversationId" => conversation_id} = params) do
     case Chat.send_message(conn.assigns.current_user, conversation_id, params) do
       {:ok, message} -> conn |> put_status(:created) |> json(MessageJSON.data(message))
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
@@ -88,14 +88,14 @@ defmodule AwsemChatWeb.ConversationsController do
   def list_media(conn, %{"id" => conversation_id} = params) do
     case Chat.list_shared_media(conn.assigns.current_user, conversation_id, params) do
       {:ok, page} -> json(conn, SharedMediaJSON.page(page))
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
   def index(conn, params) do
     case Chat.list_conversations(conn.assigns.current_user, params) do
       {:ok, page} -> json(conn, ConversationJSON.page(page))
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
@@ -104,7 +104,7 @@ defmodule AwsemChatWeb.ConversationsController do
 
     case Chat.put_preferences(conn.assigns.current_user, conversation_id, attrs) do
       {:ok, _pref} -> json(conn, %{ok: true})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
@@ -113,41 +113,30 @@ defmodule AwsemChatWeb.ConversationsController do
 
     case Chat.put_position(conn.assigns.current_user, conversation_id, message_id) do
       {:ok, _pos} -> json(conn, %{ok: true})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, chat_error(reason))
     end
   end
 
-  # A row that exists but is not mine is 403; one that does not exist is 404.
-  defp render_error(conn, :not_found), do: error(conn, :not_found, :not_found)
-  defp render_error(conn, :not_member), do: error(conn, :forbidden, :not_member)
+  # The context's reasons are its own vocabulary. Codes that already say exactly
+  # what the reason says pass through; the table holds their status.
+  @passthrough [
+    :not_found,
+    :not_member,
+    :conversation_read_only,
+    :blocked,
+    :payload_too_large,
+    :invalid_kind,
+    :invalid_client_op_id,
+    :invalid_cursor,
+    :invalid_payload,
+    :send_failed
+  ]
 
-  defp render_error(conn, :conversation_read_only),
-    do: error(conn, :conflict, :conversation_read_only)
-
-  defp render_error(conn, :blocked), do: error(conn, :forbidden, :blocked)
-
-  defp render_error(conn, :payload_too_large),
-    do: error(conn, :request_entity_too_large, :payload_too_large)
-
-  defp render_error(conn, :invalid_kind), do: error(conn, :unprocessable_entity, :invalid_kind)
-
-  defp render_error(conn, :invalid_client_op_id),
-    do: error(conn, :unprocessable_entity, :invalid_client_op_id)
-
-  defp render_error(conn, :invalid_cursor), do: error(conn, :bad_request, :invalid_cursor)
-
-  defp render_error(conn, :invalid_payload),
-    do: error(conn, :unprocessable_entity, :invalid_payload)
-
-  # The send could not be committed — an internal fault (the message or its
-  # delivery rows failed to write and the whole transaction rolled back), not a
-  # client mistake and not a retryable conflict.
-  defp render_error(conn, :send_failed),
-    do: error(conn, :internal_server_error, :send_failed)
-
-  defp render_error(conn, _reason), do: error(conn, :internal_server_error, :internal_error)
-
-  defp error(conn, status, code) do
-    conn |> put_status(status) |> json(ErrorJSON.error(code))
-  end
+  defp chat_error(reason) when reason in @passthrough, do: reason
+  # The context's own validation vocabulary, which arrives as a changeset rather
+  # than an atom: the client's input failed, so it is a 422.
+  defp chat_error(%Ecto.Changeset{}), do: :invalid_payload
+  # A reason nobody mapped is a server fault, not a client mistake: 500
+  # `internal_error`, with nothing of the reason echoed back.
+  defp chat_error(_reason), do: :internal_error
 end

@@ -75,7 +75,7 @@ defmodule AwsemChat.MomentsTest do
     assert length(moments) == 0
   end
 
-  test "test_new_member_cannot_see_prejoin_moment", %{alice: alice, bob: bob, conversation: conv} do
+  test "test_new_member_cannot_see_prejoin_moment", %{alice: alice, bob: bob} do
     # Create circle
     assert {:ok, circle} = Circles.create(alice, %{name: "Squad"})
 
@@ -103,7 +103,7 @@ defmodule AwsemChat.MomentsTest do
     )
   end
 
-  defp message_attrs(attrs \\ %{}) do
+  defp message_attrs(attrs) do
     Map.merge(
       %{
         clientOpId: Ecto.UUID.generate(),
@@ -112,17 +112,6 @@ defmodule AwsemChat.MomentsTest do
       },
       attrs
     )
-  end
-
-  defp get_pending_request_id(recipient, sender) do
-    req =
-      Repo.get_by!(AwsemChat.Social.FriendRequest,
-        sender_id: sender.id,
-        recipient_id: recipient.id,
-        state: :pending
-      )
-
-    req.id
   end
 
   defp friends_with(alice, bob) do

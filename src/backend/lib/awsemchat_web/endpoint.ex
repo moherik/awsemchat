@@ -47,5 +47,22 @@ defmodule AwsemChatWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
+  # Browser clients reach this API cross-origin: the Expo web build dev
+  # server runs on 8081, and a device on the LAN opens the API by the host's
+  # address rather than localhost. `check_origin: false` in dev does not cover
+  # CORS, which the browser enforces separately, so these are the origins the
+  # API answers a preflight for. A native build sends no Origin and is
+  # unaffected.
+  plug CORSPlug,
+    origin: [
+      "http://localhost:8081",
+      "http://127.0.0.1:8081",
+      ~r/^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:8081$/,
+      ~r/^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:8081$/
+    ],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    headers: ["Authorization", "Content-Type"]
+
   plug AwsemChatWeb.Router
 end

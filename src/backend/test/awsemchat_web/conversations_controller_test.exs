@@ -439,7 +439,7 @@ defmodule AwsemChatWeb.ConversationsControllerTest do
       |> delete("/api/v1/friends/#{Ecto.UUID.generate()}")
       |> json_response(404)
 
-    assert body == %{"error" => %{"code" => "not_found"}}
+    assert body == %{"error" => %{"code" => "user_not_found"}}
   end
 
   test "POST and DELETE /api/v1/blocks round-trips", %{alice: alice, bob: bob} do

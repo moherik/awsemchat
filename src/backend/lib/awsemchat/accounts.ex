@@ -5,6 +5,27 @@ defmodule AwsemChat.Accounts do
   Sign-in is phone + one-time code. Verifying a code issues a fresh token and
   revokes every previously issued token for that user — one active session per
   account, so logging in on a new device replaces the old one.
+
+  ## Phone normalization
+
+  The phone is the account identity, so the same number written two ways has to
+  be one account. `request_code/1`, `verify_code/2` and `get_by_phone/1` all run
+  the input through `normalize_phone/1` and then the OTP store, so a code
+  requested as `+1 555 000 0001` verifies as `+15550000001`.
+
+  The rules, in order:
+
+  - A number with a leading `+` is international: the `+` stays and everything
+    that is whitespace or one of `-` `(` `)` `.` is dropped. `+1 (555) 000.0001`
+    becomes `+15550000001`.
+  - A number with no `+` gets the same separator strip, then a leading `+` —
+    unless it starts with `0`, the national trunk marker the seeded bots use.
+    `0811110001` stays `0811110001`, because the seed and the bot roster address
+    that account by that exact string and a `+` would invent a country code
+    nobody wrote. `15550000001` becomes `+15550000001`, the same account as
+    `+15550000001`.
+  - A phone of pure separators normalizes to `""`, which the changeset refuses
+    exactly as before.
   """
 
   import Ecto.Query
@@ -15,10 +36,14 @@ defmodule AwsemChat.Accounts do
   @doc """
   Requests a sign-in code for `phone`, creating the account on first use.
 
-  The code itself is delivered by the configured `Otp` provider; only an opaque
-  `requestId` travels back to the caller.
+  `phone` is normalized first (`normalize_phone/1`), so every spelling of one
+  number reaches the same account and the same OTP slot. The code itself is
+  delivered by the configured `Otp` provider; only an opaque `requestId` travels
+  back to the caller.
   """
   def request_code(phone) when is_binary(phone) do
+    phone = normalize_phone(phone)
+
     with {:ok, _user} <- find_or_create_user(phone) do
       :ok = otp_provider().request(phone)
       {:ok, %{requestId: request_id()}}
@@ -33,6 +58,8 @@ defmodule AwsemChat.Accounts do
   `{:error, :expired}`.
   """
   def verify_code(phone, code) when is_binary(phone) and is_binary(code) do
+    phone = normalize_phone(phone)
+
     case otp_provider().fetch(phone) do
       {:ok, expected} ->
         if secure_compare(expected, code) do
@@ -94,9 +121,9 @@ defmodule AwsemChat.Accounts do
     |> Repo.update()
   end
 
-  @doc "Looks up a user by phone, or `nil`."
+  @doc "Looks up a user by phone, or `nil`. The phone is normalized first."
   def get_by_phone(phone) when is_binary(phone) do
-    Repo.get_by(User, phone: phone)
+    Repo.get_by(User, phone: normalize_phone(phone))
   end
 
   @doc "Looks up a user by id, or `nil`. An unparseable id is simply not found."
@@ -120,14 +147,27 @@ defmodule AwsemChat.Accounts do
         {:ok, user}
 
       nil ->
-        %{phone: phone, pin: PIN.generate()}
-        |> User.create_changeset()
-        |> Repo.insert()
-        |> case do
-          {:ok, user} -> {:ok, user}
-          {:error, _changeset} when attempts > 1 -> find_or_create_user(phone, attempts - 1)
-          {:error, changeset} -> {:error, changeset}
+        case PIN.generate() do
+          # The pool has nothing left. Retrying would draw from the same empty
+          # pool, so this is reported as-is and the sign-in endpoint answers
+          # `internal_error` rather than a stack trace.
+          {:error, :pin_exhausted} ->
+            {:error, :pin_exhausted}
+
+          {:ok, pin} ->
+            insert_user(phone, pin, attempts)
         end
+    end
+  end
+
+  defp insert_user(phone, pin, attempts) do
+    %{phone: phone, pin: pin}
+    |> User.create_changeset()
+    |> Repo.insert()
+    |> case do
+      {:ok, user} -> {:ok, user}
+      {:error, _changeset} when attempts > 1 -> find_or_create_user(phone, attempts - 1)
+      {:error, changeset} -> {:error, changeset}
     end
   end
 
@@ -163,6 +203,38 @@ defmodule AwsemChat.Accounts do
   defp otp_provider do
     Application.get_env(:awsemchat, :otp, [])
     |> Keyword.get(:provider, AwsemChat.Accounts.DevOtp)
+  end
+
+  @doc """
+  The identity a phone string is stored and looked up under.
+
+  `+15550000001`, `15550000001` and `+1 555 000 0001` all normalize to
+  `+15550000001`. Separators (`\\s` `-` `(` `)` `.`) are dropped, and the result
+  is given the canonical leading `+` unless it starts with `0`.
+
+  A leading `0` is the national trunk marker the seeded bots use: their numbers
+  are stored as `0811110001`, the seed and the bot roster address them by that
+  exact string, and prefixing a `+` would invent a country code nobody wrote.
+  `0811110001` therefore stays `0811110001`; every other input gets the `+`.
+
+  The tradeoff is a bare national number with no trunk `0` and no country code
+  (a US `4155550000`, say) is read as international: it becomes
+  `+4155550000`, not `+14155550000`. The app never asks a user for a number in
+  that shape, so this is accepted rather than guessed at, and adding real
+  country-code resolution is deferred with the SMS provider.
+  """
+  def normalize_phone(phone) when is_binary(phone) do
+    digits = String.replace(phone, ~r/[\s\-().]/, "")
+
+    case digits do
+      # Separators with nothing else: `()`, `- .` or a bare `+`. All of them are
+      # an empty phone, not a phone whose identity is `+`.
+      "+" -> ""
+      "" -> ""
+      "0" <> _trunk -> digits
+      "+" <> _country -> digits
+      _international -> "+" <> digits
+    end
   end
 
   defp request_id, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)

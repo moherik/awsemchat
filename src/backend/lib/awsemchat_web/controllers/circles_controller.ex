@@ -1,15 +1,26 @@
 defmodule AwsemChatWeb.CirclesController do
+  @moduledoc """
+  Circles over REST: create, update, invite, answer an invitation, leave,
+  remove a member, list members.
+
+  Every rule lives in `AwsemChat.Circles`; this module translates params into
+  context calls and context errors into a code from `AwsemChatWeb.Errors`. A
+  reason the table has no code for is a server fault, never a 400: answering a
+  fault with `bad_request` blamed the client for our own bug.
+  """
+
   use AwsemChatWeb, :controller
 
   alias AwsemChat.Circles
+  alias AwsemChatWeb.{CircleJSON, Errors}
 
   def create(conn, params) do
     case Circles.create(conn.assigns.current_user, params) do
       {:ok, circle} ->
-        conn |> put_status(:created) |> json(%{circle: circle})
+        conn |> put_status(:created) |> json(%{circle: CircleJSON.data(circle)})
 
       {:error, reason} ->
-        render_error(conn, reason)
+        Errors.render(conn, circle_error(reason))
     end
   end
 
@@ -20,8 +31,8 @@ defmodule AwsemChatWeb.CirclesController do
 
   def update(conn, %{"id" => id} = params) do
     case Circles.update(conn.assigns.current_user, id, params) do
-      {:ok, circle} -> json(conn, %{circle: circle})
-      {:error, reason} -> render_error(conn, reason)
+      {:ok, circle} -> json(conn, %{circle: CircleJSON.data(circle)})
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
@@ -30,35 +41,35 @@ defmodule AwsemChatWeb.CirclesController do
 
     case Circles.invite(conn.assigns.current_user, id, user_ids) do
       {:ok, results} -> json(conn, %{results: results})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
   def accept_invitation(conn, %{"id" => id}) do
     case Circles.respond(conn.assigns.current_user, id, :accept) do
       {:ok, _} -> json(conn, %{})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
   def decline_invitation(conn, %{"id" => id}) do
     case Circles.respond(conn.assigns.current_user, id, :decline) do
       {:ok, _} -> json(conn, %{})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
   def leave(conn, %{"id" => id}) do
     case Circles.leave(conn.assigns.current_user, id) do
       :ok -> json(conn, %{})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
   def remove_member(conn, %{"id" => id, "userId" => user_id}) do
     case Circles.remove_member(conn.assigns.current_user, id, user_id) do
       :ok -> json(conn, %{})
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, circle_error(reason))
     end
   end
 
@@ -67,17 +78,12 @@ defmodule AwsemChatWeb.CirclesController do
     json(conn, %{members: members})
   end
 
-  defp render_error(conn, :not_found), do: error(conn, :not_found, :not_found)
-  defp render_error(conn, :not_member), do: error(conn, :forbidden, :not_member)
-  defp render_error(conn, :forbidden), do: error(conn, :forbidden, :forbidden)
-  defp render_error(conn, :circle_full), do: error(conn, :conflict, :circle_full)
-  defp render_error(conn, :not_friends), do: error(conn, :forbidden, :not_friends)
-  defp render_error(conn, _), do: error(conn, :bad_request, :bad_request)
+  # Codes that say what the context's reason says pass through; the table holds
+  # their status. A changeset is the client's input failing validation, so it is
+  # a 422, not a fault of ours. Anything else is routed as an internal fault.
+  @passthrough [:not_found, :not_member, :forbidden, :circle_full, :not_friends]
 
-  defp error(conn, status, code) do
-    conn
-    |> put_status(status)
-    |> put_view(json: AwsemChatWeb.ErrorJSON)
-    |> render(:error, code: code)
-  end
+  defp circle_error(reason) when reason in @passthrough, do: reason
+  defp circle_error(%Ecto.Changeset{}), do: :invalid_payload
+  defp circle_error(_reason), do: :internal_error
 end

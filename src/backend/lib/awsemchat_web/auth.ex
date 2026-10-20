@@ -4,14 +4,13 @@ defmodule AwsemChatWeb.Auth do
 
   Reads `Authorization: Bearer <token>`, resolves it through
   `AwsemChat.Accounts.authenticate/1`, and either assigns `:current_user` or
-  halts with a 401 `unauthorized` envelope.
+  halts through the error table with `unauthorized`.
   """
 
   import Plug.Conn
-  import Phoenix.Controller, only: [json: 2]
 
   alias AwsemChat.Accounts
-  alias AwsemChatWeb.ErrorJSON
+  alias AwsemChatWeb.Errors
 
   @behaviour Plug
 
@@ -26,7 +25,7 @@ defmodule AwsemChatWeb.Auth do
       |> assign(:current_user, user)
       |> assign(:current_token, token)
     else
-      _ -> unauthorized(conn)
+      _ -> conn |> Errors.render(:unauthorized) |> halt()
     end
   end
 
@@ -35,12 +34,5 @@ defmodule AwsemChatWeb.Auth do
       ["Bearer " <> token] when byte_size(token) > 0 -> {:ok, token}
       _ -> {:error, :unauthorized}
     end
-  end
-
-  defp unauthorized(conn) do
-    conn
-    |> put_status(:unauthorized)
-    |> json(ErrorJSON.error(:unauthorized))
-    |> halt()
   end
 end

@@ -11,20 +11,18 @@ defmodule AwsemChatWeb.MediaController do
   use AwsemChatWeb, :controller
 
   alias AwsemChat.Media
-  alias AwsemChatWeb.ErrorJSON
+  alias AwsemChatWeb.Errors
 
   def create(conn, %{"file" => %Plug.Upload{} = upload}) do
     case Media.upload(conn.assigns.current_user, upload) do
       {:ok, media} -> conn |> put_status(:created) |> json(%{mediaId: media.id})
-      {:error, :too_large} -> error(conn, :request_entity_too_large, :too_large)
-      {:error, :unsupported} -> error(conn, :unsupported_media_type, :unsupported_media_type)
-      {:error, _reason} -> error(conn, :internal_server_error, :internal_error)
+      {:error, :too_large} -> Errors.render(conn, :too_large)
+      {:error, :unsupported} -> Errors.render(conn, :unsupported_media_type)
+      {:error, _reason} -> Errors.render(conn, :internal_error)
     end
   end
 
-  def create(conn, _params) do
-    error(conn, :bad_request, :missing_file)
-  end
+  def create(conn, _params), do: Errors.render(conn, :missing_file)
 
   def show(conn, %{"id" => media_id}) do
     media = Media.fetch!(media_id)
@@ -32,11 +30,11 @@ defmodule AwsemChatWeb.MediaController do
     if Media.authorized?(conn.assigns.current_user, media) do
       send_media(conn, media)
     else
-      error(conn, :forbidden, :forbidden)
+      Errors.render(conn, :forbidden)
     end
   rescue
-    Ecto.NoResultsError -> error(conn, :not_found, :media_not_found)
-    Ecto.Query.CastError -> error(conn, :not_found, :media_not_found)
+    Ecto.NoResultsError -> Errors.render(conn, :media_not_found)
+    Ecto.Query.CastError -> Errors.render(conn, :media_not_found)
   end
 
   defp send_media(conn, media) do
@@ -48,7 +46,7 @@ defmodule AwsemChatWeb.MediaController do
         |> stream_body(device)
 
       {:error, _reason} ->
-        error(conn, :not_found, :media_not_found)
+        Errors.render(conn, :media_not_found)
     end
   end
 
@@ -69,11 +67,5 @@ defmodule AwsemChatWeb.MediaController do
   defp close(device, conn) do
     File.close(device)
     conn
-  end
-
-  defp error(conn, status, code) do
-    conn
-    |> put_status(status)
-    |> json(ErrorJSON.error(code))
   end
 end

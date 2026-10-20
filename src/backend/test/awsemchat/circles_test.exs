@@ -194,11 +194,7 @@ defmodule AwsemChat.CirclesTest do
     req.id
   end
 
-  defp message_attrs(attrs \\ %{}) do
-    message_attrs_with_map(attrs)
-  end
-
-  defp message_attrs_with_map(attrs) do
+  defp message_attrs(attrs) do
     Map.merge(
       %{clientOpId: Ecto.UUID.generate(), kind: :text, payload: %{"v" => 1, "text" => "hello"}},
       attrs

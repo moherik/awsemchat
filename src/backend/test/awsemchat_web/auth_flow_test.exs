@@ -79,6 +79,38 @@ defmodule AwsemChatWeb.AuthFlowTest do
     assert {:error, :unauthorized} = Accounts.authenticate(token)
   end
 
+  test "POST /api/v1/auth/request_code rejects a phone that is only separators" do
+    body =
+      build_conn()
+      |> post("/api/v1/auth/request_code", %{"phone" => "+ () .-"})
+      |> json_response(422)
+
+    assert body == %{"error" => %{"code" => "invalid_phone"}}
+  end
+
+  test "POST /api/v1/auth/request_code without a phone is 400 phone_required" do
+    body =
+      build_conn()
+      |> post("/api/v1/auth/request_code", %{})
+      |> json_response(400)
+
+    assert body == %{"error" => %{"code" => "phone_required"}}
+  end
+
+  test "a code requested under one spelling verifies under another" do
+    assert %{"requestId" => _} =
+             build_conn()
+             |> post("/api/v1/auth/request_code", %{"phone" => "+1 555 000 0009"})
+             |> json_response(200)
+
+    body =
+      build_conn()
+      |> post("/api/v1/auth/verify_code", %{"phone" => "+15550000009", "code" => "123456"})
+      |> json_response(200)
+
+    assert body["user"]["phone"] == "+15550000009"
+  end
+
   defp register(phone) do
     {:ok, _} = Accounts.request_code(phone)
     {:ok, %{token: token}} = Accounts.verify_code(phone, "123456")

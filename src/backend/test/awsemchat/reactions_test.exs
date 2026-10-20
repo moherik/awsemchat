@@ -7,7 +7,6 @@ defmodule AwsemChat.ReactionsTest do
   alias AwsemChat.Moments
   alias AwsemChat.Reactions
   alias AwsemChat.Social
-  alias AwsemChat.Chat.CircleInvitation
   alias AwsemChat.Repo
 
   setup do
@@ -89,7 +88,7 @@ defmodule AwsemChat.ReactionsTest do
     )
   end
 
-  defp message_attrs(attrs \\ %{}) do
+  defp message_attrs(attrs) do
     Map.merge(
       %{
         clientOpId: Ecto.UUID.generate(),

@@ -1,31 +1,32 @@
 defmodule AwsemChatWeb.AuthController do
   @moduledoc """
   Sign-in endpoints: request a code, verify it, revoke the session.
+
+  The success paths shape the response; every failure names a code from
+  `AwsemChatWeb.Errors` and lets the table choose the status. A wrong or expired
+  code is `unauthorized` (401), the same answer for both, so a caller cannot
+  probe which phones have a live code.
   """
 
   use AwsemChatWeb, :controller
 
   alias AwsemChat.Accounts
-  alias AwsemChatWeb.ErrorJSON
-  alias AwsemChatWeb.UserJSON
+  alias AwsemChatWeb.{Errors, UserJSON}
 
   def request_code(conn, %{"phone" => phone}) when is_binary(phone) do
     case Accounts.request_code(phone) do
       {:ok, %{requestId: request_id}} ->
         json(conn, %{requestId: request_id})
 
+      {:error, :pin_exhausted} ->
+        Errors.render(conn, :internal_error)
+
       {:error, _changeset} ->
-        conn
-        |> put_status(:unprocessable_entity)
-        |> json(ErrorJSON.error(:invalid_phone))
+        Errors.render(conn, :invalid_phone)
     end
   end
 
-  def request_code(conn, _params) do
-    conn
-    |> put_status(:bad_request)
-    |> json(ErrorJSON.error(:phone_required))
-  end
+  def request_code(conn, _params), do: Errors.render(conn, :phone_required)
 
   def verify_code(conn, %{"phone" => phone, "code" => code})
       when is_binary(phone) and is_binary(code) do
@@ -33,18 +34,13 @@ defmodule AwsemChatWeb.AuthController do
       {:ok, %{token: token, user: user}} ->
         json(conn, %{token: token, user: UserJSON.auth_data(user)})
 
-      {:error, reason} ->
-        conn
-        |> put_status(:unauthorized)
-        |> json(ErrorJSON.error(reason))
+      # `:invalid_code` and `:expired` are the same answer to the client.
+      {:error, _reason} ->
+        Errors.render(conn, :unauthorized)
     end
   end
 
-  def verify_code(conn, _params) do
-    conn
-    |> put_status(:bad_request)
-    |> json(ErrorJSON.error(:phone_and_code_required))
-  end
+  def verify_code(conn, _params), do: Errors.render(conn, :phone_and_code_required)
 
   def logout(conn, _params) do
     token = conn.assigns.current_token

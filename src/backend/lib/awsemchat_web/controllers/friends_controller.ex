@@ -2,16 +2,16 @@ defmodule AwsemChatWeb.FriendsController do
   @moduledoc """
   Friends and blocks over REST: list, request by PIN, answer, unfriend, block.
 
-  Controllers stay thin — every rule lives in `AwsemChat.Social`; this module
-  only translates params into context calls and context errors into the API's
-  error envelope.
+  Controllers stay thin. Every rule lives in `AwsemChat.Social`; this module
+  only translates params into context calls and context errors into a code from
+  `AwsemChatWeb.Errors`.
   """
 
   use AwsemChatWeb, :controller
 
   alias AwsemChat.Accounts
   alias AwsemChat.Social
-  alias AwsemChatWeb.{ErrorJSON, FriendRequestJSON, UserJSON}
+  alias AwsemChatWeb.{Errors, FriendRequestJSON, UserJSON}
 
   def index(conn, params) do
     {:ok, friends} = Social.list_friends(conn.assigns.current_user, params)
@@ -24,11 +24,11 @@ defmodule AwsemChatWeb.FriendsController do
         conn |> put_status(:created) |> json(FriendRequestJSON.data(request))
 
       {:error, reason} ->
-        render_error(conn, reason)
+        Errors.render(conn, friend_request_error(reason))
     end
   end
 
-  def create_request(conn, _params), do: error(conn, :bad_request, :pin_required)
+  def create_request(conn, _params), do: Errors.render(conn, :pin_required)
 
   def list_requests(conn, params) do
     {:ok, requests} = Social.list_requests(conn.assigns.current_user, direction(params))
@@ -46,7 +46,7 @@ defmodule AwsemChatWeb.FriendsController do
         json(conn, %{})
 
       nil ->
-        error(conn, :not_found, :not_found)
+        Errors.render(conn, :user_not_found)
     end
   end
 
@@ -57,7 +57,7 @@ defmodule AwsemChatWeb.FriendsController do
         json(conn, %{})
 
       nil ->
-        error(conn, :not_found, :user_not_found)
+        Errors.render(conn, :user_not_found)
     end
   end
 
@@ -68,7 +68,7 @@ defmodule AwsemChatWeb.FriendsController do
         json(conn, %{})
 
       nil ->
-        error(conn, :not_found, :user_not_found)
+        Errors.render(conn, :user_not_found)
     end
   end
 
@@ -80,20 +80,18 @@ defmodule AwsemChatWeb.FriendsController do
   defp respond(conn, request_id, action) do
     case Social.respond(conn.assigns.current_user, request_id, action) do
       {:ok, request} -> json(conn, FriendRequestJSON.data(request))
-      {:error, reason} -> render_error(conn, reason)
+      {:error, reason} -> Errors.render(conn, friend_request_error(reason))
     end
   end
 
   defp direction(%{"direction" => "outgoing"}), do: :outgoing
   defp direction(_params), do: :incoming
 
-  defp render_error(conn, :not_found), do: error(conn, :not_found, :not_found)
-  defp render_error(conn, :blocked), do: error(conn, :forbidden, :blocked)
-  defp render_error(conn, :self), do: error(conn, :unprocessable_entity, :self_request)
-  defp render_error(conn, :already_friends), do: error(conn, :conflict, :already_friends)
-  defp render_error(conn, _reason), do: error(conn, :internal_server_error, :internal_error)
-
-  defp error(conn, status, code) do
-    conn |> put_status(status) |> json(ErrorJSON.error(code))
-  end
+  # The context's reasons are its own vocabulary; this is where they become
+  # codes. A reason nobody mapped is a server fault, not a client mistake.
+  defp friend_request_error(:not_found), do: :not_found
+  defp friend_request_error(:blocked), do: :blocked
+  defp friend_request_error(:self), do: :self_request
+  defp friend_request_error(:already_friends), do: :already_friends
+  defp friend_request_error(_reason), do: :internal_error
 end
