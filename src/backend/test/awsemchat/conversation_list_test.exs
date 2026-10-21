@@ -357,7 +357,13 @@ defmodule AwsemChat.ConversationListTest do
 
     assert {:ok, %{conversations: after_list}} = Chat.list_conversations(bob, %{filter: :all})
     [conv_after] = Enum.filter(after_list, fn c -> c.id == circle.id end)
-    assert conv_after.last_message.payload["text"] == "after two"
+
+    # Both "after" messages may land in the same microsecond, in which case the
+    # `created_at` tie is broken by id (a UUID comparison). The property under
+    # test is the join boundary — the newest message is one of the postjoin
+    # pair, never a prejoin message — so accept either shared-timestamp winner
+    # rather than pinning an arbitrary tie-break.
+    assert conv_after.last_message.payload["text"] in ["after one", "after two"]
   end
 
   test "test_left_member_circle_absent_from_list", %{alice: alice, carol: carol, circle: circle} do
