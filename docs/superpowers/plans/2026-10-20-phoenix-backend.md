@@ -34,7 +34,7 @@ Server→client events, all payloads JSON-encoded maps:
 - `"friends:changed"` → `%{}` to both sides on accept/unfriend/block changes.
 - `"circle:changed"` → `%{"circleId" => id, "change" => "created"|"updated"|"member_added"|"member_removed"|"left"|"invitation"}` to affected members.
 - `"moment:changed"` → `%{"conversationId" => id, "momentId" => id, "change" => "created"|"deleted"|"reaction"}` to conversation members with access.
-- `"reaction:changed"` → `%{"targetType" => "message"|"moment", "targetId" => id, "reactions" => [...]}` to conversation members.
+- `"reaction:changed"` → `%{"conversationId" => id, "targetType" => "message"|"moment", "targetId" => id}` to conversation members. The event carries no aggregate list: the reaction a client may see depends on the *recipient*, so a shared `reactions` array in one fan-out payload would leak a prejoin reaction to a late joiner the read path hides it from. Clients refetch the aggregate per viewer through `Reactions.list_for/3`, the same visibility-checked path REST uses.
 
 Envelope JSON (wire shape, produced by `AwsemChat.Chat.Envelope.render/1`):
 
@@ -214,7 +214,7 @@ Expected: all pass.
   - `Circles.create(creator, %{name, description, avatarMediaId})` — creates conversation `type: :circle`, creator active owner membership.
   - `Circles.invite(actor, circle_id, [user_ids]) :: {:ok, per_person_results}` (only accepted friends; batch), `Circles.respond(user, invitation_id, :accept | :decline)` — accept inserts membership **and** checks capacity in one transaction with a lock (`SELECT ... FOR UPDATE` on a circle counter row or membership count inside tx) → `{:error, :circle_full}`.
   - `Circles.leave(user, circle_id)`, `Circles.remove_member(actor, circle_id, user_id)` (admin/owner only), `Circles.update(actor, circle_id, attrs)`, `Circles.list_members(circle_id, cursor)`.
-  - Join boundary: `Chat.list_messages` and `Moments` filter with `membership.joined_at <= message/moment.created_at` for the viewer's current membership row; rejoin = new row (already per schema).
+  - Join boundary: `Chat.list_messages` and `Moments` filter with `membership.joined_at <= message/moment.created_at` for the viewer's current membership row. A rejoin reactivates the existing row with a refreshed `joined_at` (the unique `(circle_id, user_id)` index forbids a second row), so the boundary holds: the refreshing moves it forward and everything sent during the absence is hidden again.
 - Consumes: Social friendships for invite eligibility; channel events (`circle:changed`) from Task 5.
 
 - [ ] **Step 1: Failing tests**: `test_create_circle_with_owner_membership`, `test_invite_requires_accepted_friendship`, `test_accept_join_boundary_hides_prejoin_messages` (Review Focus 3), `test_concurrent_join_capacity_race` (two Tasks racing accept at 19 active; assert exactly one active 20th, loser `:circle_full`; Review Focus 2), `test_removed_member_cannot_list_messages_after_removal_and_gets_no_fanout`, `test_last_owner_leave_promotes_successor` (owner policy: promote oldest active member; if none, circle stays memberless read-only row)
@@ -242,7 +242,7 @@ Expected: all pass.
 - Test: `src/backend/test/awsemchat/reactions_test.exs`
 
 **Interfaces:**
-- Produces: `Reactions.set(user, target_type, target_id, emoji)` → unique (target,user); `Reactions.unset(user, target_type, target_id)`; `Reactions.list_for(target_type, ids) :: %{id => [%{emoji, userId}]}`; target must be visible to user; `reaction:changed` broadcast to conversation members.
+- Produces: `Reactions.set(user, target_type, target_id, emoji)` → unique (target,user); `Reactions.unset(user, target_type, target_id)`; `Reactions.list_for(user, target_type, ids) :: %{id => [%{emoji, userId}]}` (the viewer is a required argument — the aggregate is per-viewer, checked with the same visibility rule the write path applies); target must be visible to user; `reaction:changed` broadcast to conversation members.
 - [ ] **Step 1: Failing tests**: `test_toggle_reaction_unique_per_user`, `test_aggregate_counts`, `test_cannot_react_to_invisible_target` (pre-join moment)
 - [ ] **Step 2–5**: verify fail, implement, pass, commit `feat(backend): reactions with aggregates`
 
