@@ -97,7 +97,11 @@ defmodule AwsemChat.Circles do
       conversation ->
         case do_leave(user, conversation) do
           :ok ->
-            broadcast_circle_change(conversation.id, :left)
+            # `do_leave/2` has already committed `state: :left`, so the leaver is
+            # no longer an active member and `active_member_ids/1` excludes them.
+            # Name them explicitly, as `remove_member/3` does, so their other
+            # devices learn to drop the circle too.
+            broadcast_circle_change(conversation.id, :left, [cast_id(user.id)])
             :ok
 
           other ->
